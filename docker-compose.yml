@@ -1,0 +1,140 @@
+# Cluster Kafka em KRaft com 3 brokers — replica a topologia do Lab1 da disciplina.
+#
+# Portas (mesma convenção da professora):
+#   brokers     -> 9092, 9094, 9096  (pares)
+#   controllers -> 9093, 9095, 9097  (ímpares)
+#
+# Cada nó acumula os papéis broker + controller (process.roles=broker,controller),
+# como no server.properties do Lab1.
+#
+# Uso:
+#   docker compose up -d          sobe o cluster e cria os tópicos
+#   docker compose ps             confere o estado
+#   docker compose down           para (mantém os dados nos volumes)
+#   docker compose down -v        para e APAGA os dados
+
+name: ufes-monitoramento
+
+x-kafka-comum: &kafka-comum
+  image: apache/kafka:4.2.0
+  restart: unless-stopped
+  environment: &env-comum
+    KAFKA_PROCESS_ROLES: broker,controller
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9095,3@kafka3:9097
+    # Precisa ser o MESMO id nos três nós. Trocar só se quiser recriar o cluster do zero.
+    CLUSTER_ID: 3UVAOfuuT6W3W6bno0mx3A
+    # Tópicos internos replicados nos 3 brokers (o server.properties do lab usa 1,
+    # que só faz sentido para um broker único).
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 2
+    KAFKA_NUM_PARTITIONS: 3
+    KAFKA_LOG_DIRS: /var/lib/kafka/data
+  healthcheck:
+    test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9094 >/dev/null 2>&1 || /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9096 >/dev/null 2>&1"]
+    interval: 10s
+    timeout: 10s
+    retries: 12
+    start_period: 20s
+
+services:
+  kafka1:
+    <<: *kafka-comum
+    container_name: kafka1
+    ports:
+      - "9092:9092"
+    environment:
+      <<: *env-comum
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:19092,EXTERNAL://localhost:9092
+    volumes:
+      - kafka1-data:/var/lib/kafka/data
+
+  kafka2:
+    <<: *kafka-comum
+    container_name: kafka2
+    ports:
+      - "9094:9094"
+    environment:
+      <<: *env-comum
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19094,EXTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9095
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:19094,EXTERNAL://localhost:9094
+    volumes:
+      - kafka2-data:/var/lib/kafka/data
+
+  kafka3:
+    <<: *kafka-comum
+    container_name: kafka3
+    ports:
+      - "9096:9096"
+    environment:
+      <<: *env-comum
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19096,EXTERNAL://0.0.0.0:9096,CONTROLLER://0.0.0.0:9097
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:19096,EXTERNAL://localhost:9096
+    volumes:
+      - kafka3-data:/var/lib/kafka/data
+
+  # Cria os tópicos do projeto e encerra. Roda de novo a cada "up" — o --if-not-exists
+  # torna a operação idempotente.
+  criar-topicos:
+    image: apache/kafka:4.2.0
+    container_name: criar-topicos
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        BS=kafka1:19092
+        criar() {
+          /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+            --topic "$$1" --partitions "$$2" --replication-factor 3 \
+            --bootstrap-server $$BS
+        }
+        criar ar.medicoes          3
+        criar clima.condicoes      1
+        criar ar.eventos-derivados 3
+        criar ar.alertas           3
+        echo "--- topicos do cluster ---"
+        /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server $$BS
+    restart: "no"
+
+  # Painel web do cluster: tópicos, partições, offsets, consumer groups, lag e
+  # inspeção das mensagens. Serve para demonstrar a infraestrutura na apresentação.
+  # Acesse em http://localhost:8081
+  # (a porta 8080 fica livre para o painel do próprio projeto — ver seção 10 da proposta)
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.5.0
+    container_name: kafka-ui
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ufes-monitoramento
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:19092,kafka2:19094,kafka3:19096
+      DYNAMIC_CONFIG_ENABLED: "true"
+    restart: unless-stopped
+
+volumes:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:

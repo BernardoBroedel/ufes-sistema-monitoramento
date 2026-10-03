@@ -1,0 +1,50 @@
+# Material de aula (PDFs do professor) — não versionar
+teoria/
+
+# Java
+target/
+*.class
+*.jar
+*.war
+target/
+build/
+bin/
+out/
+hs_err_pid*.log
+
+# Gradle (nao usado neste projeto)
+.gradle/
+
+# Kafka (dados locais e logs)
+kafka-logs/
+kafka_data/
+zookeeper-data/
+logs/
+*.log
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# Saida em tempo de execucao (CSV de alertas, registro de deduplicacao)
+saida/
+
+# Ambiente / segredos
+.env
+.env.local
+*.local.properties
+
+# Python (caso usem produtores/consumidores em Python)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Sistema operacional
+Thumbs.db
+desktop.ini
+.DS_Store
