@@ -1,13 +1,7 @@
 # Monitoramento da Qualidade do Ar da Grande Vitória
 
-Projeto 1 · Sistemas Orientados a Eventos · UFES · entrega 28/09/2026
-
 Sistema de monitoramento orientado a eventos sobre Apache Kafka, alimentado pela
 API pública de qualidade do ar do **IEMA-ES** e pelo **Open-Meteo**.
-
-- Requisitos do enunciado: [PROJETO1-RESUMO.md](PROJETO1-RESUMO.md)
-- Projeto detalhado e calibração: [PROJETO1-PROPOSTA.md](PROJETO1-PROPOSTA.md)
-- Material da disciplina: [TEORIA-RESUMO.md](TEORIA-RESUMO.md)
 
 ## Como funciona
 
