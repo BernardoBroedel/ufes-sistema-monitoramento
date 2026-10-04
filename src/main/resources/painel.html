@@ -3,107 +3,177 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Monitoramento do Ar — Grande Vitória</title>
+<title>Qualidade do Ar — Grande Vitória</title>
 <style>
   :root {
-    --fundo: #0f1419;
-    --cartao: #1a2129;
-    --borda: #2a3441;
-    --texto: #e6edf3;
-    --suave: #8b98a5;
-    --destaque: #58a6ff;
+    --fundo: #f3f5f7;
+    --superficie: #ffffff;
+    --borda: #dde2e7;
+    --linha: #eef1f4;
+    --texto: #1d252c;
+    --suave: #5f6b76;
+    --fraco: #8a959f;
+    --ok: #1f8a4c;
+    --atencao: #b7791f;
+    --perigo: #c53030;
+    --barra: #e6eaee;
   }
-  @media (prefers-color-scheme: light) {
+  @media (prefers-color-scheme: dark) {
     :root {
-      --fundo: #f4f6f8; --cartao: #ffffff; --borda: #d8dee4;
-      --texto: #1c2128; --suave: #5b6570; --destaque: #0969da;
+      --fundo: #111518; --superficie: #191e23; --borda: #2b3238; --linha: #22282e;
+      --texto: #e3e8ec; --suave: #9aa5ae; --fraco: #6f7a83;
+      --ok: #48bb78; --atencao: #d69e2e; --perigo: #f56565; --barra: #2b3238;
     }
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 16px;
-    background: var(--fundo); color: var(--texto);
-    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: var(--fundo); color: var(--texto);
+    font: 14px/1.45 "Segoe UI", -apple-system, Roboto, Helvetica, Arial, sans-serif;
   }
-  header {
-    display: flex; align-items: baseline; gap: 12px;
-    flex-wrap: wrap; margin-bottom: 4px;
-  }
-  h1 { font-size: 19px; margin: 0; font-weight: 650; }
-  .sub { color: var(--suave); font-size: 12.5px; }
-  .pulso {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: #3fb950; display: inline-block; margin-right: 5px;
-    animation: pisca 2s infinite;
-  }
-  @keyframes pisca { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  .num { font-variant-numeric: tabular-nums; }
 
-  .grade { display: grid; grid-template-columns: 1fr 340px; gap: 16px; margin-top: 16px; }
-  @media (max-width: 860px) { .grade { grid-template-columns: 1fr; } }
-
-  h2 {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--suave); margin: 0 0 10px; font-weight: 600;
+  /* ------------------------------------------------------------ barra superior */
+  .topo {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap;
+    padding: 14px 24px; background: var(--superficie); border-bottom: 1px solid var(--borda);
   }
+  .topo h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  .topo .fonte { font-size: 12.5px; color: var(--suave); }
 
-  .estacoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 10px; }
-  .estacao {
-    border-radius: 10px; padding: 12px; border: 1px solid transparent;
-    display: flex; flex-direction: column; gap: 2px; min-height: 124px;
-  }
-  .estacao .bairro { font-weight: 650; font-size: 13.5px; line-height: 1.25; }
-  .estacao .cidade { font-size: 11px; opacity: .72; margin-bottom: 6px; }
-  .estacao .iqar { font-size: 30px; font-weight: 700; line-height: 1; margin-top: auto; }
-  .estacao .pol { font-size: 10.5px; opacity: .8; margin-top: 4px; }
-  .estacao .fx { font-size: 11.5px; font-weight: 650; margin-top: 2px; }
-  .estacao.offline {
-    background: var(--cartao); border-color: var(--borda); color: var(--suave);
-    border-style: dashed;
-  }
-  .estacao.offline .iqar { font-size: 15px; font-weight: 650; }
+  /* Idade do dado mais recente: e o que diz se o sistema esta vivo. O painel
+     pode estar respondendo e os produtores, parados. */
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .status .ponto { width: 9px; height: 9px; border-radius: 50%; background: var(--fraco); flex: none; }
+  .status.ok .ponto { background: var(--ok); }
+  .status.atraso .ponto { background: var(--atencao); }
+  .status.parado .ponto { background: var(--perigo); }
+  .status .rotulo { font-weight: 600; }
+  .status.atraso .rotulo { color: var(--atencao); }
+  .status.parado .rotulo { color: var(--perigo); }
+  .status .detalhe { color: var(--suave); }
 
-  .alertas { background: var(--cartao); border: 1px solid var(--borda); border-radius: 10px; padding: 12px; }
-  .lista { max-height: 62vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-  .alerta { border-left: 3px solid var(--borda); padding: 7px 0 7px 10px; }
-  .alerta.ALTA  { border-left-color: #f85149; }
-  .alerta.MEDIA { border-left-color: #d29922; }
-  .alerta.BAIXA { border-left-color: #58a6ff; }
-  .alerta .top { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
-  .alerta .tipo { font-weight: 700; letter-spacing: .02em; }
-  .alerta .hora { color: var(--suave); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .alerta .local { font-size: 12.5px; font-weight: 600; margin-top: 2px; }
-  .alerta .msg { font-size: 11.5px; color: var(--suave); margin-top: 1px; }
+  main { padding: 20px 24px 28px; max-width: 1400px; margin: 0 auto; }
 
-  footer {
-    margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--borda);
-    display: flex; gap: 20px; flex-wrap: wrap;
-    font-size: 12px; color: var(--suave); font-variant-numeric: tabular-nums;
+  /* ------------------------------------------------------------ indicadores */
+  .indicadores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 900px) { .indicadores { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .indicador {
+    background: var(--superficie); border: 1px solid var(--borda); border-radius: 6px; padding: 12px 14px;
   }
-  footer b { color: var(--texto); font-weight: 650; }
-  .vazio { color: var(--suave); font-size: 12.5px; padding: 18px 2px; }
+  .indicador .nome { font-size: 12px; color: var(--suave); }
+  .indicador .valor { font-size: 22px; font-weight: 600; margin-top: 2px; line-height: 1.2; }
+  .indicador .valor small { font-size: 14px; color: var(--suave); font-weight: 400; }
+  .indicador .extra { font-size: 12px; color: var(--suave); margin-top: 2px; }
+  .indicador .extra.velho { color: var(--atencao); }
+
+  /* ------------------------------------------------------------ blocos */
+  .bloco {
+    background: var(--superficie); border: 1px solid var(--borda); border-radius: 6px;
+    margin-top: 16px; overflow: hidden;
+  }
+  .bloco-topo {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--borda);
+  }
+  .bloco-topo h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .bloco-topo .nota { font-size: 12px; color: var(--suave); }
+  .rolagem { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 12px; font-weight: 600; color: var(--suave);
+    padding: 8px 16px; border-bottom: 1px solid var(--borda); white-space: nowrap;
+  }
+  td { padding: 9px 16px; border-bottom: 1px solid var(--linha); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  th.dir, td.dir { text-align: right; }
+  .secundario { display: block; font-size: 12px; color: var(--suave); }
+
+  /* indice: valor + barra proporcional na cor oficial da faixa */
+  .indice { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+  .indice .valor { font-weight: 600; min-width: 3.2em; text-align: right; }
+  .indice .trilho { width: 90px; height: 6px; background: var(--barra); border-radius: 3px; overflow: hidden; }
+  .indice .trilho i { display: block; height: 100%; }
+  .marca {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px;
+    vertical-align: -1px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15);
+  }
+  .situacao.ok { color: var(--ok); }
+  .situacao.atraso { color: var(--atencao); }
+  .situacao.fora { color: var(--perigo); }
+  .velho { color: var(--atencao); }
+  tr.offline td { color: var(--suave); }
+
+  /* ------------------------------------------------------------ registro de alertas */
+  .abas { display: flex; gap: 2px; flex-wrap: wrap; }
+  .aba {
+    font: inherit; font-size: 13px; cursor: pointer; background: none; color: var(--suave);
+    border: 0; border-bottom: 2px solid transparent; padding: 4px 10px;
+  }
+  .aba .qtd { color: var(--fraco); margin-left: 4px; }
+  .aba.ativa { color: var(--texto); border-bottom-color: var(--texto); font-weight: 600; }
+  .aba:disabled { cursor: default; opacity: .45; }
+  .registro { max-height: 460px; overflow-y: auto; }
+  .registro th { position: sticky; top: 0; background: var(--superficie); }
+  .registro td { font-size: 13px; }
+  .sev { font-weight: 600; white-space: nowrap; }
+  .sev.ALTA  { color: var(--perigo); }
+  .sev.MEDIA { color: var(--atencao); }
+  .sev.BAIXA { color: var(--suave); }
+  td.descricao { color: var(--suave); min-width: 280px; }
+  .vazio { padding: 22px 16px; color: var(--suave); font-size: 13px; }
+
+  /* ------------------------------------------------------------ rodape */
+  footer { margin-top: 14px; font-size: 12px; color: var(--suave); display: flex; flex-wrap: wrap; gap: 4px 20px; }
+  footer b { color: var(--texto); font-weight: 600; }
+  .legenda { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Qualidade do Ar — Grande Vitória</h1>
-  <span class="sub"><span class="pulso"></span><span id="atualizado">conectando…</span></span>
-</header>
-<div class="sub">Dados da rede automática do IEMA-ES, entregues via Apache Kafka</div>
-
-<div class="grade">
-  <section>
-    <h2>Estações</h2>
-    <div class="estacoes" id="estacoes"></div>
-  </section>
-
-  <section class="alertas">
-    <h2>Situações de interesse detectadas</h2>
-    <div class="lista" id="alertas"></div>
-  </section>
+<div class="topo">
+  <div>
+    <h1>Qualidade do Ar — Grande Vitória</h1>
+    <div class="fonte">Rede automática de monitoramento do IEMA-ES · dados recebidos via Apache Kafka</div>
+  </div>
+  <div class="status" id="status"><span class="ponto"></span><span class="detalhe">conectando…</span></div>
 </div>
 
-<footer id="rodape"></footer>
+<main>
+  <section class="indicadores" id="indicadores"></section>
+
+  <section class="bloco">
+    <div class="bloco-topo">
+      <h2>Estações</h2>
+      <div class="legenda nota" id="legenda"></div>
+    </div>
+    <div class="rolagem">
+      <table>
+        <thead>
+          <tr>
+            <th>Estação</th>
+            <th>Poluente crítico</th>
+            <th class="dir">IQAr</th>
+            <th>Faixa</th>
+            <th>Última medição</th>
+            <th>Situação</th>
+          </tr>
+        </thead>
+        <tbody id="estacoes"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="bloco">
+    <div class="bloco-topo">
+      <h2>Situações de interesse detectadas</h2>
+      <div class="abas" id="abas"></div>
+    </div>
+    <div class="registro rolagem" id="registro"></div>
+  </section>
+
+  <footer id="rodape"></footer>
+</main>
 
 <script>
 // Cores oficiais do IQAr. O valor de "Boa" e exatamente o que a API do IEMA
@@ -115,103 +185,220 @@ const CORES = {
   muitoruim:  '#FF3B30',
   pessima:    '#8B1A4A'
 };
+const ESCALA = [
+  ['boa', 'Boa', '0–40'], ['moderada', 'Moderada', '41–80'], ['ruim', 'Ruim', '81–120'],
+  ['muitoruim', 'Muito ruim', '121–200'], ['pessima', 'Péssima', '201–400']
+];
+
+// A rede publica de hora em hora: ate 2h de idade e normal; acima de 6h,
+// algum produtor provavelmente parou (ou o que chega e um replay).
+const HORAS_ATRASO = 2;
+const HORAS_PARADO = 6;
+
+// Fundo de escala da barra do indice: o topo da faixa "Ruim".
+const IQAR_ESCALA = 120;
+
+const TIPOS = {
+  F1_SUBIDA_ACELERADA: ['F1', 'Piora acelerada'],
+  F2_MUDANCA_FAIXA:    ['F2', 'Mudança de faixa'],
+  F3_ESTACAO_OFFLINE:  ['F3', 'Estação fora de operação'],
+  F4_ESTAGNACAO:       ['F4', 'Estagnação atmosférica']
+};
+const SEVERIDADE = { ALTA: 'Alta', MEDIA: 'Média', BAIXA: 'Baixa' };
+
+let filtroAtivo = 'TODOS';
+let ultimoEstado = null;
 
 const normalizar = t => (t || '')
   .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '');
+const corDaFaixa = f => CORES[normalizar(f)] || '#9aa5ae';
 
-// Texto escuro ou claro conforme a luminancia do fundo, para o cartao ficar legivel
-// tanto no verde claro da faixa "Boa" quanto no vinho da "Pessima".
-function corDoTexto(hex) {
-  const r = parseInt(hex.slice(1, 3), 16),
-        g = parseInt(hex.slice(3, 5), 16),
-        b = parseInt(hex.slice(5, 7), 16);
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.55 ? '#ffffff' : '#10211a';
+const num = (v, casas = 1) => Number(v).toLocaleString('pt-BR',
+  { minimumFractionDigits: casas, maximumFractionDigits: casas });
+
+function data(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return isNaN(d) || d.getFullYear() < 2000 ? null : d;
 }
 
-const hora = iso => {
-  if (!iso) return '--';
-  const d = new Date(iso);
-  return isNaN(d) ? '--' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-};
+// "11:00" se for hoje, "03/10 11:00" se nao for: horario sem data engana.
+function quando(iso) {
+  const d = data(iso);
+  if (!d) return '—';
+  const h = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return new Date().toDateString() === d.toDateString()
+    ? h : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + h;
+}
 
-const ROTULO = {
-  F1_SUBIDA_ACELERADA: 'F1 · SUBIDA',
-  F2_MUDANCA_FAIXA:    'F2 · FAIXA',
-  F3_ESTACAO_OFFLINE:  'F3 · SENSOR',
-  F4_ESTAGNACAO:       'F4 · ESTAGNAÇÃO'
-};
+function idade(iso) {
+  const d = data(iso);
+  return d ? (Date.now() - d.getTime()) / 3600000 : Infinity;
+}
+
+function textoIdade(h) {
+  if (!isFinite(h)) return 'sem data';
+  if (h < 1) return 'há ' + Math.max(1, Math.round(h * 60)) + ' min';
+  if (h < 48) return 'há ' + Math.round(h) + ' h';
+  return 'há ' + Math.round(h / 24) + ' dias';
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ------------------------------------------------------------------ desenho
+
+function desenharStatus(estacoes, atualizadoEm) {
+  const recente = estacoes.filter(e => e.operacional).map(e => e.dataHoraMedicao).sort().at(-1);
+  const h = idade(recente);
+  const nivel = h <= HORAS_ATRASO ? 'ok' : h <= HORAS_PARADO ? 'atraso' : 'parado';
+  const rotulo = { ok: 'Recebendo dados', atraso: 'Dados atrasados', parado: 'Sem dados novos' }[nivel];
+  const alvo = document.getElementById('status');
+  alvo.className = 'status ' + nivel;
+  alvo.title = 'Idade da medição mais recente que chegou pelo Kafka. '
+    + 'Painel consultado às ' + quando(atualizadoEm) + '.';
+  alvo.innerHTML = recente
+    ? `<span class="ponto"></span><span class="rotulo">${rotulo}</span>`
+      + `<span class="detalhe num">última medição ${quando(recente)} (${textoIdade(h)})</span>`
+    : `<span class="ponto"></span><span class="detalhe">aguardando medições…</span>`;
+}
+
+function desenharIndicadores(d) {
+  const est = d.estacoes || [];
+  const oper = est.filter(e => e.operacional);
+  const pior = oper.reduce((a, b) => (!a || b.iqar > a.iqar ? b : a), null);
+  const c = d.contadores || {};
+  const clima = d.clima;
+  const climaVelho = clima && idade(clima.dataHora) > HORAS_ATRASO ? ' velho' : '';
+
+  const blocos = [
+    ['Estações operando',
+      `${oper.length} <small>de ${est.length}</small>`,
+      est.length - oper.length ? `${est.length - oper.length} sem dados válidos` : 'todas reportando'],
+    ['Maior índice agora',
+      pior ? `<span class="marca" style="background:${corDaFaixa(pior.faixa)}"></span>${num(pior.iqar)}` : '—',
+      pior ? `${esc(pior.localizacao)} · ${esc(pior.faixa)}` : ''],
+    ['Alertas emitidos',
+      `${c.alertas ?? 0}`,
+      `${c.derivados ?? 0} por evento derivado (F4)`],
+    ['Condição do tempo',
+      clima ? `${num(clima.ventoVelocidade)} <small>km/h</small>` : '—',
+      clima ? `<span class="${climaVelho}">chuva ${num(clima.precipitacao)} mm · ${quando(clima.dataHora)}</span>` : 'sem dados de clima']
+  ];
+  document.getElementById('indicadores').innerHTML = blocos.map(([nome, valor, extra]) => `
+    <div class="indicador">
+      <div class="nome">${nome}</div>
+      <div class="valor num">${valor}</div>
+      <div class="extra">${extra}</div>
+    </div>`).join('');
+}
 
 function desenharEstacoes(lista) {
   const alvo = document.getElementById('estacoes');
   if (!lista.length) {
-    alvo.innerHTML = '<div class="vazio">Aguardando medições do tópico ar.medicoes…</div>';
+    alvo.innerHTML = '<tr><td colspan="6" class="vazio">Aguardando medições do tópico ar.medicoes…</td></tr>';
     return;
   }
   alvo.innerHTML = lista.map(e => {
+    const nome = `${esc(e.localizacao)}<span class="secundario">${esc(e.municipio)}</span>`;
     if (!e.operacional) {
-      return `<div class="estacao offline">
-        <div class="bairro">${e.localizacao}</div>
-        <div class="cidade">${e.municipio}</div>
-        <div class="iqar">sem dados</div>
-        <div class="pol">estação não reporta</div>
-        <div class="fx">⚠ F3</div>
-      </div>`;
+      return `<tr class="offline">
+        <td>${nome}</td><td>—</td><td class="dir">—</td><td>—</td><td>—</td>
+        <td class="situacao fora">Sem dados válidos (F3)</td>
+      </tr>`;
     }
-    const cor = CORES[normalizar(e.faixa)] || '#8b98a5';
-    const txt = corDoTexto(cor);
-    return `<div class="estacao" style="background:${cor};color:${txt}">
-      <div class="bairro">${e.localizacao}</div>
-      <div class="cidade">${e.municipio}</div>
-      <div class="iqar">${e.iqar.toFixed(1)}</div>
-      <div class="pol">${e.poluenteCritico || ''}</div>
-      <div class="fx">${e.faixa || ''} · ${hora(e.dataHoraMedicao)}</div>
-    </div>`;
+    const cor = corDaFaixa(e.faixa);
+    const largura = Math.min(100, e.iqar / IQAR_ESCALA * 100);
+    const atrasada = idade(e.dataHoraMedicao) > HORAS_ATRASO;
+    return `<tr>
+      <td>${nome}</td>
+      <td>${esc(e.poluenteCritico)}</td>
+      <td class="dir"><div class="indice"><span class="valor num">${num(e.iqar)}</span>
+        <span class="trilho"><i style="width:${largura}%;background:${cor}"></i></span></div></td>
+      <td style="white-space:nowrap"><span class="marca" style="background:${cor}"></span>${esc(e.faixa)}</td>
+      <td class="num${atrasada ? ' velho' : ''}">${quando(e.dataHoraMedicao)}</td>
+      <td class="situacao ${atrasada ? 'atraso' : 'ok'}">${atrasada ? 'Leitura antiga' : 'Operando'}</td>
+    </tr>`;
   }).join('');
 }
 
-function desenharAlertas(lista) {
-  const alvo = document.getElementById('alertas');
-  if (!lista.length) {
-    alvo.innerHTML = '<div class="vazio">Nenhuma situação detectada ainda.<br>'
-      + 'Rode o ProdutorReplay para reproduzir o histórico.</div>';
-    return;
-  }
-  alvo.innerHTML = lista.map(a => `
-    <div class="alerta ${a.severidade}">
-      <div class="top">
-        <span class="tipo">${ROTULO[a.tipo] || a.tipo}</span>
-        <span class="hora">${hora(a.dataHora)}</span>
-      </div>
-      <div class="local">${a.localizacao} · ${a.municipio}</div>
-      <div class="msg">${a.mensagem}</div>
-    </div>`).join('');
+function desenharLegenda() {
+  document.getElementById('legenda').innerHTML = ESCALA
+    .map(([k, nome, faixa]) => `<span><span class="marca" style="background:${CORES[k]}"></span>${nome} ${faixa}</span>`)
+    .join('');
 }
 
-function desenharRodape(c, clima) {
-  const partes = [
-    `ar.medicoes <b>${c.medicoes}</b>`,
-    `ar.alertas <b>${c.alertas}</b>`,
-    `derivados <b>${c.derivados}</b>`
-  ];
-  if (clima) {
-    partes.push(`vento <b>${clima.ventoVelocidade.toFixed(1)} km/h</b>`);
-    partes.push(`chuva <b>${clima.precipitacao.toFixed(1)} mm</b>`);
-  }
-  document.getElementById('rodape').innerHTML = partes.join(' &nbsp;·&nbsp; ');
+function desenharAbas(alertas) {
+  const conta = t => t === 'TODOS' ? alertas.length : alertas.filter(a => a.tipo === t).length;
+  const abas = [['TODOS', 'Todos'], ...Object.entries(TIPOS).map(([t, [cod]]) => [t, cod])];
+  document.getElementById('abas').innerHTML = abas.map(([t, nome]) => {
+    const n = conta(t);
+    return `<button class="aba${t === filtroAtivo ? ' ativa' : ''}" data-tipo="${t}"
+      ${n === 0 && t !== 'TODOS' ? 'disabled' : ''}>${nome}<span class="qtd num">${n}</span></button>`;
+  }).join('');
 }
+
+function desenharRegistro(alertas) {
+  const alvo = document.getElementById('registro');
+  const visiveis = filtroAtivo === 'TODOS' ? alertas : alertas.filter(a => a.tipo === filtroAtivo);
+  if (!visiveis.length) {
+    alvo.innerHTML = '<div class="vazio">Nenhuma situação detectada até o momento.</div>';
+    return;
+  }
+  alvo.innerHTML = `<table>
+    <thead><tr><th>Emitido em</th><th>Situação</th><th>Severidade</th><th>Estação</th><th>Descrição</th></tr></thead>
+    <tbody>${visiveis.map(a => {
+      const [cod, nome] = TIPOS[a.tipo] || [a.tipo, ''];
+      return `<tr>
+        <td class="num" style="white-space:nowrap">${quando(a.dataHora)}</td>
+        <td style="white-space:nowrap"><b>${cod}</b> · ${nome}</td>
+        <td class="sev ${a.severidade}">${SEVERIDADE[a.severidade] || a.severidade}</td>
+        <td>${esc(a.localizacao)}<span class="secundario">${esc(a.municipio)}</span></td>
+        <td class="descricao">${esc(a.mensagem)}</td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+function desenharRodape(c, atualizadoEm) {
+  document.getElementById('rodape').innerHTML = [
+    `Tópicos Kafka: ar.medicoes <b class="num">${c.medicoes ?? 0}</b> · ar.alertas <b class="num">${c.alertas ?? 0}</b>`
+      + ` · ar.eventos-derivados <b class="num">${c.derivados ?? 0}</b>`,
+    `Fontes: IEMA-ES (qualidadedoarapi.es.gov.br) e Open-Meteo`,
+    `Painel consultado às <span class="num">${quando(atualizadoEm)}</span> · atualiza a cada 5 s`
+  ].map(t => `<span>${t}</span>`).join('');
+}
+
+function desenhar() {
+  const d = ultimoEstado;
+  const alertas = d.alertas || [];
+  if (filtroAtivo !== 'TODOS' && !alertas.some(a => a.tipo === filtroAtivo)) filtroAtivo = 'TODOS';
+  desenharStatus(d.estacoes || [], d.atualizadoEm);
+  desenharIndicadores(d);
+  desenharEstacoes(d.estacoes || []);
+  desenharAbas(alertas);
+  desenharRegistro(alertas);
+  desenharRodape(d.contadores || {}, d.atualizadoEm);
+}
+
+document.getElementById('abas').addEventListener('click', ev => {
+  const b = ev.target.closest('.aba');
+  if (!b || b.disabled || !ultimoEstado) return;
+  filtroAtivo = b.dataset.tipo;
+  desenhar();
+});
 
 async function atualizar() {
   try {
-    const d = await (await fetch('/api/estado')).json();
-    desenharEstacoes(d.estacoes || []);
-    desenharAlertas(d.alertas || []);
-    desenharRodape(d.contadores || {}, d.clima);
-    document.getElementById('atualizado').textContent = 'atualizado às ' + hora(d.atualizadoEm);
+    ultimoEstado = await (await fetch('/api/estado')).json();
+    desenhar();
   } catch (e) {
-    document.getElementById('atualizado').textContent = 'sem conexão com o notificador';
+    const alvo = document.getElementById('status');
+    alvo.className = 'status parado';
+    alvo.innerHTML = '<span class="ponto"></span><span class="rotulo">Sem conexão</span>'
+      + '<span class="detalhe">o notificador não responde</span>';
   }
 }
 
+desenharLegenda();
 atualizar();
 setInterval(atualizar, 5000);
 </script>

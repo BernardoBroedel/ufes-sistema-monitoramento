@@ -6,6 +6,7 @@ import br.ufes.soe.ar.modelo.Medicao;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,8 +27,12 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class EstadoPainel {
 
-    /** Quantos alertas manter na tela. */
-    private static final int MAX_ALERTAS = 40;
+    /**
+     * Quantos alertas manter na tela, POR TIPO. Um teto unico para todos fazia uma
+     * rajada de F1 (o reprocessamento do topico gera dezenas) empurrar para fora o
+     * unico F4 — justamente o alerta mais importante.
+     */
+    private static final int MAX_POR_TIPO = 25;
 
     private final Map<Integer, Medicao> estacoes = new ConcurrentHashMap<>();
     private final Deque<Alerta> alertas = new ArrayDeque<>();
@@ -55,8 +60,21 @@ public class EstadoPainel {
         }
         synchronized (alertas) {
             alertas.addFirst(a);
-            while (alertas.size() > MAX_ALERTAS) {
-                alertas.removeLast();
+            descartarExcedente(a.tipo());
+        }
+    }
+
+    /** Remove o alerta mais antigo do tipo, se ele passou do limite. Chamar com o lock. */
+    private void descartarExcedente(Alerta.Tipo tipo) {
+        long doTipo = alertas.stream().filter(x -> x.tipo() == tipo).count();
+        if (doTipo <= MAX_POR_TIPO) {
+            return;
+        }
+        Iterator<Alerta> it = alertas.descendingIterator();
+        while (it.hasNext()) {
+            if (it.next().tipo() == tipo) {
+                it.remove();
+                return;
             }
         }
     }
