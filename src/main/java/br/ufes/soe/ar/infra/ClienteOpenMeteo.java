@@ -11,8 +11,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.IntStream;
 
 /**
  * Cliente do Open-Meteo: vento e chuva da Grande Vitoria. Sem chave e sem cadastro.
@@ -63,18 +63,17 @@ public class ClienteOpenMeteo {
         JsonNode h = Json.mapper().readTree(resp.body()).path("hourly");
         JsonNode tempos = h.path("time");
         Instant agora = Instant.now();
-        List<CondicaoClima> serie = new ArrayList<>();
 
-        for (int i = 0; i < tempos.size(); i++) {
-            serie.add(new CondicaoClima(
-                    LocalDateTime.parse(tempos.get(i).asText()),
-                    h.path("temperature_2m").path(i).asDouble(),
-                    h.path("precipitation").path(i).asDouble(),
-                    h.path("wind_speed_10m").path(i).asDouble(),
-                    h.path("wind_direction_10m").path(i).asInt(),
-                    agora));
-        }
-        return serie;
+        // A API devolve arrays paralelos (um por variavel); o indice os costura.
+        return IntStream.range(0, tempos.size())
+                .mapToObj(i -> new CondicaoClima(
+                        LocalDateTime.parse(tempos.get(i).asText()),
+                        h.path("temperature_2m").path(i).asDouble(),
+                        h.path("precipitation").path(i).asDouble(),
+                        h.path("wind_speed_10m").path(i).asDouble(),
+                        h.path("wind_direction_10m").path(i).asInt(),
+                        agora))
+                .toList();
     }
 
     public CondicaoClima lerCondicaoAtual() throws Exception {

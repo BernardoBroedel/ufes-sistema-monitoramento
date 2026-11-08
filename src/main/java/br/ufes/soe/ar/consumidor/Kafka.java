@@ -6,6 +6,8 @@ import br.ufes.soe.ar.modelo.Alerta;
 import br.ufes.soe.ar.serde.JsonDeserializer;
 import br.ufes.soe.ar.serde.JsonSerializer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -13,8 +15,13 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /** Fabricas de consumidor e produtor, para nao repetir Properties em cada detector. */
 public final class Kafka {
@@ -59,6 +66,27 @@ public final class Kafka {
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         return new KafkaProducer<>(props);
+    }
+
+    /**
+     * Laco de consumo infinito: a cada {@code poll}, entrega cada valor nao nulo a
+     * {@code acao}. O comportamento especifico de cada detector chega como lambda,
+     * e o laco de polling — igual em todos — fica escrito uma vez so.
+     */
+    public static <T> void consumir(KafkaConsumer<String, T> consumidor, Consumer<? super T> acao) {
+        while (true) {
+            valores(consumidor.poll(Duration.ofMillis(1000))).forEach(acao);
+        }
+    }
+
+    /**
+     * Stream com os valores de um lote de registros. Descarta os nulos, que sao os
+     * eventos que o {@code JsonDeserializer} nao conseguiu ler.
+     */
+    public static <T> Stream<T> valores(ConsumerRecords<String, T> registros) {
+        return StreamSupport.stream(registros.spliterator(), false)
+                .map(ConsumerRecord::value)
+                .filter(Objects::nonNull);
     }
 
     /** Publica um alerta em {@code ar.alertas}, chaveado pelo tipo da situacao. */

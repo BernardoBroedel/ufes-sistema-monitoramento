@@ -5,8 +5,6 @@ import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.CondicaoClima;
 import br.ufes.soe.ar.modelo.EventoEstagnacao;
 import br.ufes.soe.ar.modelo.Medicao;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -14,13 +12,16 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.util.DoubleSummaryStatistics;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.stream.Collectors;
 
 /**
  * F4 - EPISODIO DE ESTAGNACAO ATMOSFERICA (evento DERIVADO).
@@ -62,14 +63,36 @@ public class CorrelacionadorEstagnacao {
     private static final NavigableMap<LocalDateTime, CondicaoClima> CLIMA =
             new ConcurrentSkipListMap<>();
 
+    private final int janelaHoras;
+    private final double iqarMinimo;
+    private final double ventoMaximo;
+    private final double chuvaMaxima;
+    private final HistoricoEstacoes historico;
+    /**
+     * Uma estacao so gera UM evento por episodio. Sem isto, cada hora nova dentro
+     * do mesmo episodio publicaria um derivado praticamente igual.
+     */
+    private final Set<Integer> emEpisodio = new HashSet<>();
+
+    private CorrelacionadorEstagnacao(int janelaHoras, double iqarMinimo,
+                                      double ventoMaximo, double chuvaMaxima) {
+        this.janelaHoras = janelaHoras;
+        this.iqarMinimo = iqarMinimo;
+        this.ventoMaximo = ventoMaximo;
+        this.chuvaMaxima = chuvaMaxima;
+        this.historico = new HistoricoEstacoes(janelaHoras);
+    }
+
     public static void main(String[] args) {
-        int janelaHoras = Config.inteiro("f4.janela.horas");
-        double iqarMinimo = Config.decimal("f4.iqar.minimo");
-        double ventoMaximo = Config.decimal("f4.vento.maximo");
-        double chuvaMaxima = Config.decimal("f4.chuva.maxima");
+        CorrelacionadorEstagnacao correlacionador = new CorrelacionadorEstagnacao(
+                Config.inteiro("f4.janela.horas"),
+                Config.decimal("f4.iqar.minimo"),
+                Config.decimal("f4.vento.maximo"),
+                Config.decimal("f4.chuva.maxima"));
 
         System.out.printf("%s | F4: IQAr > %.0f por %dh, vento < %.1f km/h, chuva <= %.1f mm%n",
-                GRUPO, iqarMinimo, janelaHoras, ventoMaximo, chuvaMaxima);
+                GRUPO, correlacionador.iqarMinimo, correlacionador.janelaHoras,
+                correlacionador.ventoMaximo, correlacionador.chuvaMaxima);
 
         new Thread(CorrelacionadorEstagnacao::consumirClima, "clima").start();
 
@@ -78,87 +101,89 @@ public class CorrelacionadorEstagnacao {
         // e o episodio passaria despercebido justamente no comeco do replay.
         esperarClima(Duration.ofSeconds(20));
 
-        HistoricoEstacoes historico = new HistoricoEstacoes(janelaHoras);
-        // Uma estacao so gera UM evento por episodio. Sem isto, cada hora nova
-        // dentro do mesmo episodio publicaria um derivado praticamente igual.
-        Set<Integer> emEpisodio = new HashSet<>();
-
         try (KafkaConsumer<String, Medicao> consumidor =
                      Kafka.consumidor(GRUPO, Medicao.class, Topicos.MEDICOES);
              KafkaProducer<String, Object> produtor = Kafka.produtor()) {
 
-            while (true) {
-                ConsumerRecords<String, Medicao> registros =
-                        consumidor.poll(Duration.ofMillis(1000));
-
-                for (ConsumerRecord<String, Medicao> r : registros) {
-                    Medicao m = r.value();
-                    if (m == null || !m.operacional() || !historico.registrar(m)) {
-                        continue;
-                    }
-
-                    // Saiu do limite: o episodio terminou, a estacao volta a poder
-                    // gerar um novo evento no futuro.
-                    if (m.iqar() <= iqarMinimo) {
-                        if (emEpisodio.remove(m.idEstacao())) {
-                            System.out.printf("  .. %s saiu do episodio (IQAr %.1f)%n",
-                                    m.localizacao(), m.iqar());
-                        }
-                        continue;
-                    }
-                    if (emEpisodio.contains(m.idEstacao())) {
-                        continue;   // ja anunciado
-                    }
-
-                    List<Medicao> janela = historico.janela(m.idEstacao(), janelaHoras - 1);
-                    if (janela.size() < janelaHoras) {
-                        continue;   // ainda nao ha seis horas de historico
-                    }
-                    if (janela.stream().anyMatch(x -> x.iqar() <= iqarMinimo)) {
-                        continue;   // a persistencia foi interrompida
-                    }
-
-                    // --- correlacao com a segunda fonte de eventos ---
-                    List<CondicaoClima> meteoro = climaDaJanela(janela);
-                    if (meteoro.size() < janela.size()) {
-                        continue;   // sem clima suficiente para afirmar o episodio
-                    }
-                    double ventoMedio = meteoro.stream()
-                            .mapToDouble(CondicaoClima::ventoVelocidade).average().orElse(99);
-                    double chuvaTotal = meteoro.stream()
-                            .mapToDouble(CondicaoClima::precipitacao).sum();
-
-                    if (ventoMedio >= ventoMaximo || chuvaTotal > chuvaMaxima) {
-                        continue;
-                    }
-
-                    // --- conhecimento inferido: publica o evento derivado ---
-                    EventoEstagnacao evento = new EventoEstagnacao(
-                            EventoEstagnacao.TIPO,
-                            m.idEstacao(),
-                            m.localizacao(),
-                            m.municipio(),
-                            janela.get(0).dataHoraMedicao(),
-                            m.dataHoraMedicao(),
-                            janela.size(),
-                            janela.stream().mapToDouble(Medicao::iqar).min().orElse(0),
-                            janela.stream().mapToDouble(Medicao::iqar).max().orElse(0),
-                            m.poluenteCritico(),
-                            ventoMedio,
-                            direcaoPredominante(meteoro),
-                            chuvaTotal,
-                            Instant.now());
-
-                    produtor.send(new ProducerRecord<>(
-                            Topicos.DERIVADOS, String.valueOf(m.idEstacao()), evento));
-                    produtor.flush();
-                    emEpisodio.add(m.idEstacao());
-
-                    System.out.printf("  >> DERIVADO %s | %s%n",
-                            EventoEstagnacao.TIPO, evento.descricaoCurta());
-                }
-            }
+            Kafka.consumir(consumidor, m ->
+                    correlacionador.avaliar(m)
+                            .ifPresent(evento -> correlacionador.publicar(produtor, evento)));
         }
+    }
+
+    /** Aplica a regra de F4 a uma leitura; devolve o evento derivado, se foi inferido. */
+    private Optional<EventoEstagnacao> avaliar(Medicao m) {
+        if (!m.operacional() || !historico.registrar(m)) {
+            return Optional.empty();
+        }
+
+        // Saiu do limite: o episodio terminou, a estacao volta a poder
+        // gerar um novo evento no futuro.
+        if (m.iqar() <= iqarMinimo) {
+            if (emEpisodio.remove(m.idEstacao())) {
+                System.out.printf("  .. %s saiu do episodio (IQAr %.1f)%n",
+                        m.localizacao(), m.iqar());
+            }
+            return Optional.empty();
+        }
+        if (emEpisodio.contains(m.idEstacao())) {
+            return Optional.empty();    // ja anunciado
+        }
+
+        List<Medicao> janela = historico.janela(m.idEstacao(), janelaHoras - 1);
+        if (janela.size() < janelaHoras) {
+            return Optional.empty();    // ainda nao ha seis horas de historico
+        }
+        if (janela.stream().anyMatch(x -> x.iqar() <= iqarMinimo)) {
+            return Optional.empty();    // a persistencia foi interrompida
+        }
+
+        // --- correlacao com a segunda fonte de eventos ---
+        List<CondicaoClima> meteoro = climaDaJanela(janela);
+        if (meteoro.size() < janela.size()) {
+            return Optional.empty();    // sem clima suficiente para afirmar o episodio
+        }
+        double ventoMedio = meteoro.stream()
+                .mapToDouble(CondicaoClima::ventoVelocidade).average().orElse(99);
+        double chuvaTotal = meteoro.stream()
+                .mapToDouble(CondicaoClima::precipitacao).sum();
+
+        if (ventoMedio >= ventoMaximo || chuvaTotal > chuvaMaxima) {
+            return Optional.empty();
+        }
+
+        // --- conhecimento inferido: monta o evento derivado ---
+        // Minimo e maximo da janela numa unica passada pelo stream.
+        DoubleSummaryStatistics iqar = janela.stream()
+                .mapToDouble(Medicao::iqar)
+                .summaryStatistics();
+
+        return Optional.of(new EventoEstagnacao(
+                EventoEstagnacao.TIPO,
+                m.idEstacao(),
+                m.localizacao(),
+                m.municipio(),
+                janela.get(0).dataHoraMedicao(),
+                m.dataHoraMedicao(),
+                janela.size(),
+                iqar.getMin(),
+                iqar.getMax(),
+                m.poluenteCritico(),
+                ventoMedio,
+                direcaoPredominante(meteoro),
+                chuvaTotal,
+                Instant.now()));
+    }
+
+    /** Publica o evento derivado e marca a estacao como em episodio. */
+    private void publicar(KafkaProducer<String, Object> produtor, EventoEstagnacao evento) {
+        produtor.send(new ProducerRecord<>(
+                Topicos.DERIVADOS, String.valueOf(evento.idEstacao()), evento));
+        produtor.flush();
+        emEpisodio.add(evento.idEstacao());
+
+        System.out.printf("  >> DERIVADO %s | %s%n",
+                EventoEstagnacao.TIPO, evento.descricaoCurta());
     }
 
     /** Segura o inicio ate o mapa de clima ter conteudo, ou ate estourar o prazo. */
@@ -183,20 +208,18 @@ public class CorrelacionadorEstagnacao {
 
     /** Condicao meteorologica vigente em cada hora da janela. */
     private static List<CondicaoClima> climaDaJanela(List<Medicao> janela) {
-        List<CondicaoClima> encontradas = new ArrayList<>();
-        for (Medicao m : janela) {
-            Map.Entry<LocalDateTime, CondicaoClima> e = CLIMA.floorEntry(m.dataHoraMedicao());
-            if (e != null) {
-                encontradas.add(e.getValue());
-            }
-        }
-        return encontradas;
+        return janela.stream()
+                .map(m -> CLIMA.floorEntry(m.dataHoraMedicao()))
+                .filter(Objects::nonNull)       // hora anterior a todo o clima recebido
+                .map(Map.Entry::getValue)
+                .toList();
     }
 
+    /** Direcao cardeal mais frequente na janela (a moda). */
     private static String direcaoPredominante(List<CondicaoClima> lista) {
         return lista.stream()
-                .collect(java.util.stream.Collectors.groupingBy(
-                        CondicaoClima::direcaoCardeal, java.util.stream.Collectors.counting()))
+                .collect(Collectors.groupingBy(
+                        CondicaoClima::direcaoCardeal, Collectors.counting()))
                 .entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
@@ -207,13 +230,11 @@ public class CorrelacionadorEstagnacao {
     private static void consumirClima() {
         try (KafkaConsumer<String, CondicaoClima> c =
                      Kafka.consumidor(GRUPO + "-clima", CondicaoClima.class, Topicos.CLIMA)) {
-            while (true) {
-                for (ConsumerRecord<String, CondicaoClima> r : c.poll(Duration.ofMillis(1000))) {
-                    if (r.value() != null && r.value().dataHora() != null) {
-                        CLIMA.put(r.value().dataHora(), r.value());
-                    }
+            Kafka.consumir(c, clima -> {
+                if (clima.dataHora() != null) {
+                    CLIMA.put(clima.dataHora(), clima);
                 }
-            }
+            });
         }
     }
 }

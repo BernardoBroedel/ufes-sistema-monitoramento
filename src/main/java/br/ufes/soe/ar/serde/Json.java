@@ -1,9 +1,13 @@
 package br.ufes.soe.ar.serde;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /** ObjectMapper compartilhado, configurado uma vez so. */
 public final class Json {
@@ -20,5 +24,10 @@ public final class Json {
 
     public static ObjectMapper mapper() {
         return MAPPER;
+    }
+
+    /** Elementos de um array JSON como Stream, para processa-los com a API de streams. */
+    public static Stream<JsonNode> elementos(JsonNode array) {
+        return StreamSupport.stream(array.spliterator(), false);
     }
 }

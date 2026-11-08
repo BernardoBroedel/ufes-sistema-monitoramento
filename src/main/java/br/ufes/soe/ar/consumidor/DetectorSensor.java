@@ -4,8 +4,6 @@ import br.ufes.soe.ar.infra.Config;
 import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.Alerta;
 import br.ufes.soe.ar.modelo.Medicao;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 
@@ -13,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -41,89 +40,98 @@ public class DetectorSensor {
 
     private static final String GRUPO = "detector-sensor";
 
+    private final int atrasoMaximo;
+    private final int saltoReplay;
+    /** Evita repetir o mesmo alerta a cada polling enquanto a estacao segue fora. */
+    private final Set<Integer> jaAlertadas = new HashSet<>();
+    /**
+     * "Agora" segundo o stream: a medicao mais recente ja observada no topico.
+     * E campo, e nao variavel local do main, porque e reatribuido a cada leitura —
+     * e um lambda so pode capturar variaveis locais efetivamente finais.
+     */
+    private LocalDateTime tempoDoStream;
+
+    private DetectorSensor(int atrasoMaximo, int saltoReplay) {
+        this.atrasoMaximo = atrasoMaximo;
+        this.saltoReplay = saltoReplay;
+    }
+
     public static void main(String[] args) {
-        int atrasoMaximo = Config.inteiro("f3.atraso.maximo.horas");
-        int saltoReplay = Config.inteiro("f3.salto.replay.horas");
-        // Evita repetir o mesmo alerta a cada polling enquanto a estacao segue fora.
-        Set<Integer> jaAlertadas = new HashSet<>();
-        // "Agora" segundo o stream: a medicao mais recente ja observada no topico.
-        LocalDateTime tempoDoStream = null;
+        DetectorSensor detector = new DetectorSensor(
+                Config.inteiro("f3.atraso.maximo.horas"),
+                Config.inteiro("f3.salto.replay.horas"));
 
         System.out.printf("%s | F3: sem medicao valida ha mais de %dh | topico=%s%n",
-                GRUPO, atrasoMaximo, Topicos.MEDICOES);
+                GRUPO, detector.atrasoMaximo, Topicos.MEDICOES);
 
         try (KafkaConsumer<String, Medicao> consumidor =
                      Kafka.consumidor(GRUPO, Medicao.class, Topicos.MEDICOES);
              KafkaProducer<String, Alerta> produtor = Kafka.produtor()) {
 
-            while (true) {
-                ConsumerRecords<String, Medicao> registros =
-                        consumidor.poll(Duration.ofMillis(1000));
+            Kafka.consumir(consumidor, m ->
+                    detector.avaliar(m)
+                            .ifPresent(alerta -> Kafka.publicarAlerta(produtor, alerta)));
+        }
+    }
 
-                for (ConsumerRecord<String, Medicao> r : registros) {
-                    Medicao m = r.value();
-                    if (m == null) {
-                        continue;
-                    }
+    /** Aplica a regra de F3 a uma leitura; devolve o alerta, se a estacao caiu agora. */
+    private Optional<Alerta> avaliar(Medicao m) {
+        // Avanca o relogio do stream antes de julgar qualquer estacao.
+        if (m.operacional()) {
+            avancarRelogio(m.dataHoraMedicao());
+        }
+        if (tempoDoStream == null) {
+            return Optional.empty();    // ainda nao ha referencia temporal
+        }
 
-                    // Avanca o relogio do stream antes de julgar qualquer estacao.
-                    if (m.operacional()) {
-                        if (tempoDoStream == null
-                                || m.dataHoraMedicao().isAfter(tempoDoStream)) {
-                            tempoDoStream = m.dataHoraMedicao();
+        long horasAtraso = m.atraso(tempoDoStream).toHours();
+        boolean atrasada = m.operacional() && horasAtraso > atrasoMaximo;
+        boolean fora = !m.operacional() || atrasada;
 
-                        } else if (Duration.between(m.dataHoraMedicao(), tempoDoStream)
-                                .toHours() >= saltoReplay) {
-                            // Salto grande para tras: o produtor-replay comecou a
-                            // reproduzir o historico. Se o relogio do stream ficasse
-                            // no futuro, TODAS as estacoes do replay pareceriam
-                            // atrasadas. Recua o relogio e limpa os alertas antigos.
-                            System.out.printf("  ~~ replay detectado: relogio do stream "
-                                    + "recua de %s para %s%n", tempoDoStream, m.dataHoraMedicao());
-                            tempoDoStream = m.dataHoraMedicao();
-                            jaAlertadas.clear();
-                        }
-                    }
-                    if (tempoDoStream == null) {
-                        continue;   // ainda nao ha referencia temporal
-                    }
-
-                    long horasAtraso = m.atraso(tempoDoStream).toHours();
-                    boolean atrasada = m.operacional() && horasAtraso > atrasoMaximo;
-                    boolean fora = !m.operacional() || atrasada;
-
-                    if (!fora) {
-                        // Voltou a operar: limpa o estado e avisa a recuperacao.
-                        if (jaAlertadas.remove(m.idEstacao())) {
-                            System.out.printf("  .. %s voltou a reportar (IQAr %.1f)%n",
-                                    m.localizacao(), m.iqar());
-                        }
-                        continue;
-                    }
-
-                    if (!jaAlertadas.add(m.idEstacao())) {
-                        continue;   // ja alertada, segue fora do ar
-                    }
-
-                    String motivo = !m.operacional()
-                            ? "estacao nao reporta poluente nem data valida"
-                            : "ultima medicao ha %d horas (referencia do stream: %s)"
-                                    .formatted(horasAtraso, tempoDoStream);
-
-                    Kafka.publicarAlerta(produtor, new Alerta(
-                            Alerta.Tipo.F3_ESTACAO_OFFLINE,
-                            Alerta.Severidade.MEDIA,
-                            m.idEstacao(),
-                            m.localizacao(),
-                            m.municipio(),
-                            m.poluenteCritico(),
-                            m.iqar(),
-                            m.faixa(),
-                            "Estacao indisponivel para monitoramento: " + motivo
-                                    + ". Acionar manutencao.",
-                            Instant.now()));
-                }
+        if (!fora) {
+            // Voltou a operar: limpa o estado e avisa a recuperacao.
+            if (jaAlertadas.remove(m.idEstacao())) {
+                System.out.printf("  .. %s voltou a reportar (IQAr %.1f)%n",
+                        m.localizacao(), m.iqar());
             }
+            return Optional.empty();
+        }
+
+        if (!jaAlertadas.add(m.idEstacao())) {
+            return Optional.empty();    // ja alertada, segue fora do ar
+        }
+
+        String motivo = !m.operacional()
+                ? "estacao nao reporta poluente nem data valida"
+                : "ultima medicao ha %d horas (referencia do stream: %s)"
+                        .formatted(horasAtraso, tempoDoStream);
+
+        return Optional.of(new Alerta(
+                Alerta.Tipo.F3_ESTACAO_OFFLINE,
+                Alerta.Severidade.MEDIA,
+                m.idEstacao(),
+                m.localizacao(),
+                m.municipio(),
+                m.poluenteCritico(),
+                m.iqar(),
+                m.faixa(),
+                "Estacao indisponivel para monitoramento: " + motivo
+                        + ". Acionar manutencao.",
+                Instant.now()));
+    }
+
+    private void avancarRelogio(LocalDateTime dataHora) {
+        if (tempoDoStream == null || dataHora.isAfter(tempoDoStream)) {
+            tempoDoStream = dataHora;
+
+        } else if (Duration.between(dataHora, tempoDoStream).toHours() >= saltoReplay) {
+            // Salto grande para tras: o produtor-replay comecou a reproduzir o
+            // historico. Se o relogio do stream ficasse no futuro, TODAS as estacoes
+            // do replay pareceriam atrasadas. Recua o relogio e limpa os alertas antigos.
+            System.out.printf("  ~~ replay detectado: relogio do stream "
+                    + "recua de %s para %s%n", tempoDoStream, dataHora);
+            tempoDoStream = dataHora;
+            jaAlertadas.clear();
         }
     }
 }

@@ -1,5 +1,7 @@
 package br.ufes.soe.ar.modelo;
 
+import java.util.Arrays;
+
 /**
  * Faixas do Indice de Qualidade do Ar (Lei 14.850/2024, Resolucao CONAMA 506/2024).
  *
@@ -47,14 +49,11 @@ public enum Faixa {
                 .replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
                 .replace('ú', 'u')
                 .replace('ç', 'c');
-        return switch (n) {
-            case "boa" -> BOA;
-            case "moderada" -> MODERADA;
-            case "ruim" -> RUIM;
-            case "muito ruim" -> MUITO_RUIM;
-            case "pessima" -> PESSIMA;
-            default -> DESCONHECIDA;
-        };
+        // O rotulo de cada constante ja e o texto esperado (sem acento): basta procurar.
+        return Arrays.stream(values())
+                .filter(f -> f.rotulo.equalsIgnoreCase(n))
+                .findFirst()
+                .orElse(DESCONHECIDA);
     }
 
     /** true se esta faixa representa qualidade pior que a outra. */

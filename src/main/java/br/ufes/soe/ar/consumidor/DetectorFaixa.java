@@ -4,14 +4,12 @@ import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.Alerta;
 import br.ufes.soe.ar.modelo.Faixa;
 import br.ufes.soe.ar.modelo.Medicao;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * F2 - ULTRAPASSAGEM DA FAIXA DE QUALIDADE (situacao sobre evento primitivo).
@@ -50,48 +48,45 @@ public class DetectorFaixa {
                      Kafka.consumidor(GRUPO, Medicao.class, Topicos.MEDICOES);
              KafkaProducer<String, Alerta> produtor = Kafka.produtor()) {
 
-            while (true) {
-                ConsumerRecords<String, Medicao> registros =
-                        consumidor.poll(Duration.ofMillis(1000));
-
-                for (ConsumerRecord<String, Medicao> r : registros) {
-                    Medicao m = r.value();
-                    if (m == null || !m.operacional() || !historico.registrar(m)) {
-                        continue;
-                    }
-
-                    Medicao leituraAnterior = historico.anterior(m.idEstacao());
-                    if (leituraAnterior == null) {
-                        continue;   // primeira leitura: so estabelece a linha de base
-                    }
-                    Faixa nova = m.faixaClassificada();
-                    Faixa antiga = leituraAnterior.faixaClassificada();
-
-                    if (nova == Faixa.DESCONHECIDA || nova == antiga) {
-                        continue;
-                    }
-                    if (!nova.piorQue(antiga)) {
-                        System.out.printf("  .. %s melhorou: %s -> %s%n",
-                                m.localizacao(), antiga.rotulo(), nova.rotulo());
-                        continue;
-                    }
-
-                    Kafka.publicarAlerta(produtor, new Alerta(
-                            Alerta.Tipo.F2_MUDANCA_FAIXA,
-                            nova.exigeAtencaoAlta()
-                                    ? Alerta.Severidade.ALTA : Alerta.Severidade.MEDIA,
-                            m.idEstacao(),
-                            m.localizacao(),
-                            m.municipio(),
-                            m.poluenteCritico(),
-                            m.iqar(),
-                            m.faixa(),
-                            "Qualidade do ar passou de \"%s\" para \"%s\" (IQAr %.1f). %s"
-                                    .formatted(antiga.rotulo(), nova.rotulo(), m.iqar(),
-                                            RECOMENDACAO.getOrDefault(nova, "")),
-                            Instant.now()));
-                }
-            }
+            Kafka.consumir(consumidor, m ->
+                    avaliar(m, historico)
+                            .ifPresent(alerta -> Kafka.publicarAlerta(produtor, alerta)));
         }
+    }
+
+    /** Aplica a regra de F2 a uma leitura; devolve o alerta, se a faixa piorou. */
+    private static Optional<Alerta> avaliar(Medicao m, HistoricoEstacoes historico) {
+        if (!m.operacional() || !historico.registrar(m)) {
+            return Optional.empty();
+        }
+        Faixa nova = m.faixaClassificada();
+
+        // Sem leitura anterior (primeira da estacao), o Optional ja vem vazio:
+        // ela so estabelece a linha de base.
+        Optional<Faixa> mudouDe = historico.anterior(m.idEstacao())
+                .map(Medicao::faixaClassificada)
+                .filter(antiga -> nova != Faixa.DESCONHECIDA && nova != antiga);
+
+        // Melhora nao gera alerta, so aparece no log.
+        mudouDe.filter(antiga -> !nova.piorQue(antiga))
+                .ifPresent(antiga -> System.out.printf("  .. %s melhorou: %s -> %s%n",
+                        m.localizacao(), antiga.rotulo(), nova.rotulo()));
+
+        return mudouDe
+                .filter(nova::piorQue)
+                .map(antiga -> new Alerta(
+                        Alerta.Tipo.F2_MUDANCA_FAIXA,
+                        nova.exigeAtencaoAlta()
+                                ? Alerta.Severidade.ALTA : Alerta.Severidade.MEDIA,
+                        m.idEstacao(),
+                        m.localizacao(),
+                        m.municipio(),
+                        m.poluenteCritico(),
+                        m.iqar(),
+                        m.faixa(),
+                        "Qualidade do ar passou de \"%s\" para \"%s\" (IQAr %.1f). %s"
+                                .formatted(antiga.rotulo(), nova.rotulo(), m.iqar(),
+                                        RECOMENDACAO.getOrDefault(nova, "")),
+                        Instant.now()));
     }
 }

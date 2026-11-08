@@ -8,8 +8,6 @@ import br.ufes.soe.ar.modelo.Medicao;
 import br.ufes.soe.ar.serde.Json;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 
 import java.io.IOException;
@@ -20,7 +18,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.time.Duration;
 
 /**
  * NOTIFICADOR — atende a "funcionalidade desejavel" do enunciado: exibir as
@@ -94,45 +91,26 @@ public class Notificador {
     private static void consumirAlertas(Path csv) {
         try (KafkaConsumer<String, Alerta> c =
                      Kafka.consumidor("notificador-alertas", Alerta.class, Topicos.ALERTAS)) {
-            while (true) {
-                ConsumerRecords<String, Alerta> registros = c.poll(Duration.ofMillis(1000));
-                for (ConsumerRecord<String, Alerta> r : registros) {
-                    Alerta a = r.value();
-                    if (a == null) {
-                        continue;
-                    }
-                    ESTADO.registrarAlerta(a);
-                    anexarCsv(csv, a);
-                    System.out.printf("  [%s] %s - %s%n",
-                            a.severidade(), a.tipo(), a.localizacao());
-                }
-            }
+            Kafka.consumir(c, a -> {
+                ESTADO.registrarAlerta(a);
+                anexarCsv(csv, a);
+                System.out.printf("  [%s] %s - %s%n",
+                        a.severidade(), a.tipo(), a.localizacao());
+            });
         }
     }
 
     private static void consumirMedicoes() {
         try (KafkaConsumer<String, Medicao> c =
                      Kafka.consumidor("notificador-medicoes", Medicao.class, Topicos.MEDICOES)) {
-            while (true) {
-                for (ConsumerRecord<String, Medicao> r : c.poll(Duration.ofMillis(1000))) {
-                    if (r.value() != null) {
-                        ESTADO.registrarMedicao(r.value());
-                    }
-                }
-            }
+            Kafka.consumir(c, ESTADO::registrarMedicao);
         }
     }
 
     private static void consumirClima() {
         try (KafkaConsumer<String, CondicaoClima> c =
                      Kafka.consumidor("notificador-clima", CondicaoClima.class, Topicos.CLIMA)) {
-            while (true) {
-                for (ConsumerRecord<String, CondicaoClima> r : c.poll(Duration.ofMillis(1000))) {
-                    if (r.value() != null) {
-                        ESTADO.registrarClima(r.value());
-                    }
-                }
-            }
+            Kafka.consumir(c, ESTADO::registrarClima);
         }
     }
 
