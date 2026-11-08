@@ -14,13 +14,16 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
+import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * PRODUTOR DE REPLAY. Le as ~48h de historico das estacoes e republica em
@@ -57,40 +60,25 @@ public class ProdutorReplay {
         props.put(ProducerConfig.ACKS_CONFIG, "all");
 
         ClienteIema iema = new ClienteIema();
-        List<Medicao> linhaDoTempo = new ArrayList<>();
-        List<CondicaoClima> climaHistorico = new ArrayList<>();
 
         System.out.println("produtor-replay | estacoes=" + estacoes
                 + " | 1 hora real = " + msPorHora + " ms");
 
-        for (int id : estacoes) {
-            try {
-                List<Medicao> h = iema.lerHistorico(id);
-                linhaDoTempo.addAll(h);
-                System.out.printf("  %-20s %3d leituras historicas%n",
-                        Estacoes.localizacao(id), h.size());
-            } catch (Exception e) {
-                System.err.printf("  %-20s falhou: %s%n", Estacoes.localizacao(id), e.getMessage());
-            }
-        }
+        // Ordena por tempo: as estacoes precisam avancar juntas, hora a hora,
+        // senao a correlacao de F4 com o clima nao faz sentido.
+        List<Medicao> linhaDoTempo = estacoes.stream()
+                .flatMap(id -> historicoDe(iema, id).stream())
+                .sorted(Comparator.comparing(Medicao::dataHoraMedicao))
+                .toList();
 
         // O clima entra junto: sem ele, a janela de F4 nao teria condicao
         // meteorologica para correlacionar e o evento derivado nunca sairia.
-        try {
-            climaHistorico.addAll(new ClienteOpenMeteo().lerHistorico(3));
-            System.out.printf("  %-20s %3d leituras horarias%n", "clima", climaHistorico.size());
-        } catch (Exception e) {
-            System.err.println("  clima historico falhou: " + e.getMessage());
-        }
+        List<CondicaoClima> climaHistorico = climaHistorico();
 
         if (linhaDoTempo.isEmpty()) {
             System.err.println("nenhum historico obtido, nada a reproduzir");
             return;
         }
-
-        // Ordena por tempo: as estacoes precisam avancar juntas, hora a hora,
-        // senao a correlacao de F4 com o clima nao faz sentido.
-        linhaDoTempo.sort(Comparator.comparing(Medicao::dataHoraMedicao));
 
         System.out.printf("%nreproduzindo %d eventos de %s ate %s%n%n",
                 linhaDoTempo.size(),
@@ -99,40 +87,78 @@ public class ProdutorReplay {
 
         // Indexa o clima por hora, para publicar a condicao correspondente
         // imediatamente antes das medicoes daquela hora.
-        Map<LocalDateTime, CondicaoClima> climaPorHora = new HashMap<>();
-        for (CondicaoClima c : climaHistorico) {
-            climaPorHora.put(c.dataHora().withMinute(0).withSecond(0).withNano(0), c);
-        }
+        Map<LocalDateTime, CondicaoClima> climaPorHora = climaHistorico.stream()
+                .collect(Collectors.toMap(
+                        c -> horaCheia(c.dataHora()),
+                        Function.identity(),
+                        (anterior, posterior) -> posterior));
+
+        // Medicoes agrupadas por hora cheia; o TreeMap mantem as horas em ordem e
+        // o groupingBy preserva, dentro de cada hora, a ordem da linha do tempo.
+        Map<LocalDateTime, List<Medicao>> porHora = linhaDoTempo.stream()
+                .collect(Collectors.groupingBy(
+                        m -> horaCheia(m.dataHoraMedicao()),
+                        TreeMap::new,
+                        Collectors.toList()));
 
         try (KafkaProducer<String, Object> produtor = new KafkaProducer<>(props)) {
-            LocalDateTime horaAnterior = null;
+            boolean primeiraHora = true;
 
-            for (Medicao m : linhaDoTempo) {
-                LocalDateTime hora = m.dataHoraMedicao().withMinute(0).withSecond(0).withNano(0);
-
-                if (horaAnterior == null || hora.isAfter(horaAnterior)) {
-                    if (horaAnterior != null) {
-                        Thread.sleep(msPorHora);
-                    }
-                    horaAnterior = hora;
-
-                    CondicaoClima c = climaPorHora.get(hora);
-                    if (c != null) {
-                        produtor.send(new ProducerRecord<>(
-                                Topicos.CLIMA, "grande-vitoria", c));
-                        System.out.printf("  %s  %-20s %s%n",
-                                hora, "[clima]", c.descricaoCurta());
-                    }
+            // Laco classico de proposito: Thread.sleep lanca InterruptedException
+            // (checada), que um lambda de forEach nao pode propagar.
+            for (Map.Entry<LocalDateTime, List<Medicao>> hora : porHora.entrySet()) {
+                if (!primeiraHora) {
+                    Thread.sleep(msPorHora);
                 }
-                produtor.send(new ProducerRecord<>(
-                        Topicos.MEDICOES, String.valueOf(m.idEstacao()), m));
+                primeiraHora = false;
 
-                System.out.printf("  %s  %-20s IQAr %6.1f  [%s]%n",
-                        m.dataHoraMedicao(), m.localizacao(), m.iqar(), m.faixa());
+                Optional.ofNullable(climaPorHora.get(hora.getKey())).ifPresent(c -> {
+                    produtor.send(new ProducerRecord<>(Topicos.CLIMA, "grande-vitoria", c));
+                    System.out.printf("  %s  %-20s %s%n",
+                            hora.getKey(), "[clima]", c.descricaoCurta());
+                });
+
+                hora.getValue().forEach(m -> {
+                    produtor.send(new ProducerRecord<>(
+                            Topicos.MEDICOES, String.valueOf(m.idEstacao()), m));
+                    System.out.printf("  %s  %-20s IQAr %6.1f  [%s]%n",
+                            m.dataHoraMedicao(), m.localizacao(), m.iqar(), m.faixa());
+                });
             }
             produtor.flush();
         }
         System.out.println("\nreplay concluido.");
+    }
+
+    /**
+     * Historico de uma estacao, ou lista vazia se a API falhar. A excecao e tratada
+     * aqui, e nao no stream, porque um lambda nao pode lancar excecao checada.
+     */
+    private static List<Medicao> historicoDe(ClienteIema iema, int id) {
+        try {
+            List<Medicao> h = iema.lerHistorico(id);
+            System.out.printf("  %-20s %3d leituras historicas%n",
+                    Estacoes.localizacao(id), h.size());
+            return h;
+        } catch (Exception e) {
+            System.err.printf("  %-20s falhou: %s%n", Estacoes.localizacao(id), e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static List<CondicaoClima> climaHistorico() {
+        try {
+            List<CondicaoClima> clima = new ClienteOpenMeteo().lerHistorico(3);
+            System.out.printf("  %-20s %3d leituras horarias%n", "clima", clima.size());
+            return clima;
+        } catch (Exception e) {
+            System.err.println("  clima historico falhou: " + e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static LocalDateTime horaCheia(LocalDateTime t) {
+        return t.truncatedTo(ChronoUnit.HOURS);
     }
 
     private static List<Integer> estacoesDe(String arg) {

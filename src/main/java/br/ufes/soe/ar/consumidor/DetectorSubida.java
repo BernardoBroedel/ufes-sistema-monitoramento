@@ -4,18 +4,16 @@ import br.ufes.soe.ar.infra.Config;
 import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.Alerta;
 import br.ufes.soe.ar.modelo.Medicao;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 
-import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * F1 - PIORA ACELERADA DA QUALIDADE DO AR (situacao sobre evento primitivo).
  *
- * <p><i>"Caso o IQAr de uma estacao suba mais de 5 pontos em 3 horas, o sistema deve
+ * <p><i>"Caso o IQAr de uma estacao suba mais de 3 pontos em 3 horas, o sistema deve
  * notificar os gestores ambientais informando a estacao, o poluente critico, o valor
  * atual e a variacao observada."</i>
  *
@@ -42,44 +40,34 @@ public class DetectorSubida {
                      Kafka.consumidor(GRUPO, Medicao.class, Topicos.MEDICOES);
              KafkaProducer<String, Alerta> produtor = Kafka.produtor()) {
 
-            while (true) {
-                ConsumerRecords<String, Medicao> registros =
-                        consumidor.poll(Duration.ofMillis(1000));
-
-                for (ConsumerRecord<String, Medicao> r : registros) {
-                    Medicao atual = r.value();
-                    if (atual == null || !atual.operacional()) {
-                        continue;   // estacao offline e assunto de F3
-                    }
-                    if (!historico.registrar(atual)) {
-                        continue;   // leitura repetida
-                    }
-
-                    Medicao referencia = historico.haHoras(atual.idEstacao(), janelaHoras);
-                    if (referencia == null) {
-                        continue;   // historico ainda insuficiente para esta estacao
-                    }
-
-                    double delta = atual.iqar() - referencia.iqar();
-                    if (delta <= deltaMinimo) {
-                        continue;
-                    }
-
-                    Kafka.publicarAlerta(produtor, new Alerta(
-                            Alerta.Tipo.F1_SUBIDA_ACELERADA,
-                            Alerta.Severidade.MEDIA,
-                            atual.idEstacao(),
-                            atual.localizacao(),
-                            atual.municipio(),
-                            atual.poluenteCritico(),
-                            atual.iqar(),
-                            atual.faixa(),
-                            "IQAr subiu %.1f pontos em %dh (de %.1f para %.1f)"
-                                    .formatted(delta, janelaHoras,
-                                            referencia.iqar(), atual.iqar()),
-                            Instant.now()));
-                }
-            }
+            Kafka.consumir(consumidor, atual ->
+                    avaliar(atual, historico, janelaHoras, deltaMinimo)
+                            .ifPresent(alerta -> Kafka.publicarAlerta(produtor, alerta)));
         }
+    }
+
+    /** Aplica a regra de F1 a uma leitura; devolve o alerta, se a regra disparou. */
+    private static Optional<Alerta> avaliar(Medicao atual, HistoricoEstacoes historico,
+                                            int janelaHoras, double deltaMinimo) {
+        // estacao offline e assunto de F3; leitura repetida e descartada
+        if (!atual.operacional() || !historico.registrar(atual)) {
+            return Optional.empty();
+        }
+        // vazio enquanto o historico da estacao ainda nao cobre a janela
+        return historico.haHoras(atual.idEstacao(), janelaHoras)
+                .filter(referencia -> atual.iqar() - referencia.iqar() > deltaMinimo)
+                .map(referencia -> new Alerta(
+                        Alerta.Tipo.F1_SUBIDA_ACELERADA,
+                        Alerta.Severidade.MEDIA,
+                        atual.idEstacao(),
+                        atual.localizacao(),
+                        atual.municipio(),
+                        atual.poluenteCritico(),
+                        atual.iqar(),
+                        atual.faixa(),
+                        "IQAr subiu %.1f pontos em %dh (de %.1f para %.1f)"
+                                .formatted(atual.iqar() - referencia.iqar(), janelaHoras,
+                                        referencia.iqar(), atual.iqar()),
+                        Instant.now()));
     }
 }

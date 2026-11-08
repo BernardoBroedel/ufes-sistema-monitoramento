@@ -66,25 +66,25 @@ public class ProdutorIema {
             while (true) {
                 try {
                     List<Medicao> medicoes = iema.lerEstacoes();
-                    int novas = 0;
 
-                    for (Medicao m : medicoes) {
-                        if (!dedup.registrarSeNova(m.chaveDeduplicacao())) {
-                            continue;   // ja publicada num polling anterior
-                        }
+                    // registrarSeNova devolve false para o que ja foi publicado num
+                    // polling anterior; o filtro deixa passar so as leituras ineditas.
+                    List<Medicao> novas = medicoes.stream()
+                            .filter(m -> dedup.registrarSeNova(m.chaveDeduplicacao()))
+                            .toList();
+
+                    novas.forEach(m -> {
                         produtor.send(new ProducerRecord<>(
                                 Topicos.MEDICOES, String.valueOf(m.idEstacao()), m));
-                        novas++;
-
                         System.out.printf("  -> [%s] %s%n",
                                 m.dataHoraMedicao() == null ? "sem data" : m.dataHoraMedicao(),
                                 m.operacional() ? m.descricaoCurta()
                                                 : m.localizacao() + " SEM DADOS (estacao offline)");
-                    }
+                    });
                     produtor.flush();
                     dedup.salvar();
                     System.out.printf("[%s] %d estacoes lidas, %d eventos novos publicados%n",
-                            java.time.LocalTime.now().format(HORA), medicoes.size(), novas);
+                            java.time.LocalTime.now().format(HORA), medicoes.size(), novas.size());
 
                 } catch (Exception e) {
                     // A indisponibilidade da API nao pode derrubar o produtor:

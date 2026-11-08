@@ -5,13 +5,14 @@ import br.ufes.soe.ar.modelo.CondicaoClima;
 import br.ufes.soe.ar.modelo.Medicao;
 
 import java.util.ArrayDeque;
+import java.util.Comparator;
 import java.util.Deque;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BinaryOperator;
 
 /**
  * Estado que o painel exibe: a ultima leitura de cada estacao, os alertas mais
@@ -34,6 +35,14 @@ public class EstadoPainel {
      */
     private static final int MAX_POR_TIPO = 25;
 
+    /**
+     * Das duas leituras da mesma estacao, fica a de data mais recente; leitura sem
+     * data perde sempre, e em empate fica a que ja estava.
+     */
+    private static final BinaryOperator<Medicao> MAIS_RECENTE = BinaryOperator.maxBy(
+            Comparator.comparing(Medicao::dataHoraMedicao,
+                    Comparator.nullsFirst(Comparator.naturalOrder())));
+
     private final Map<Integer, Medicao> estacoes = new ConcurrentHashMap<>();
     private final Deque<Alerta> alertas = new ArrayDeque<>();
     private final AtomicLong totalMedicoes = new AtomicLong();
@@ -43,10 +52,7 @@ public class EstadoPainel {
 
     public void registrarMedicao(Medicao m) {
         totalMedicoes.incrementAndGet();
-        estacoes.merge(m.idEstacao(), m, (antiga, nova) ->
-                nova.dataHoraMedicao() == null ? antiga
-                        : antiga.dataHoraMedicao() == null ? nova
-                        : nova.dataHoraMedicao().isAfter(antiga.dataHoraMedicao()) ? nova : antiga);
+        estacoes.merge(m.idEstacao(), m, MAIS_RECENTE);
     }
 
     public void registrarClima(CondicaoClima c) {
@@ -66,16 +72,12 @@ public class EstadoPainel {
 
     /** Remove o alerta mais antigo do tipo, se ele passou do limite. Chamar com o lock. */
     private void descartarExcedente(Alerta.Tipo tipo) {
-        long doTipo = alertas.stream().filter(x -> x.tipo() == tipo).count();
-        if (doTipo <= MAX_POR_TIPO) {
-            return;
-        }
-        Iterator<Alerta> it = alertas.descendingIterator();
-        while (it.hasNext()) {
-            if (it.next().tipo() == tipo) {
-                it.remove();
-                return;
-            }
+        // do mais novo (inicio do deque) para o mais antigo
+        List<Alerta> doTipo = alertas.stream()
+                .filter(x -> x.tipo() == tipo)
+                .toList();
+        if (doTipo.size() > MAX_POR_TIPO) {
+            alertas.removeLastOccurrence(doTipo.get(doTipo.size() - 1));
         }
     }
 
@@ -93,7 +95,7 @@ public class EstadoPainel {
         Map<String, Object> raiz = new LinkedHashMap<>();
         raiz.put("atualizadoEm", java.time.Instant.now().toString());
         raiz.put("estacoes", estacoes.values().stream()
-                .sorted((a, b) -> Integer.compare(a.idEstacao(), b.idEstacao()))
+                .sorted(Comparator.comparingInt(Medicao::idEstacao))
                 .map(EstadoPainel::comoMapa)
                 .toList());
         raiz.put("clima", clima);

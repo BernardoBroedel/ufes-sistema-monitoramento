@@ -3,11 +3,9 @@ package br.ufes.soe.ar.consumidor;
 import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.Alerta;
 import br.ufes.soe.ar.modelo.EventoEstagnacao;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 
-import java.time.Duration;
 import java.time.Instant;
 
 /**
@@ -40,30 +38,25 @@ public class AlertaEstagnacao {
                      Kafka.consumidor(GRUPO, EventoEstagnacao.class, Topicos.DERIVADOS);
              KafkaProducer<String, Alerta> produtor = Kafka.produtor()) {
 
-            while (true) {
-                for (ConsumerRecord<String, EventoEstagnacao> r
-                        : consumidor.poll(Duration.ofMillis(1000))) {
-
-                    EventoEstagnacao e = r.value();
-                    if (e == null) {
-                        continue;
-                    }
-
-                    Kafka.publicarAlerta(produtor, new Alerta(
-                            Alerta.Tipo.F4_ESTAGNACAO,
-                            Alerta.Severidade.ALTA,
-                            e.idEstacao(),
-                            e.localizacao(),
-                            e.municipio(),
-                            e.poluenteCritico(),
-                            e.iqarMaximo(),
-                            "Moderada ou pior",
-                            ("Episodio de estagnacao atmosferica: %s. "
-                                    + "Recomenda-se restringir atividades ao ar livre na regiao.")
-                                    .formatted(e.descricaoCurta()),
-                            Instant.now()));
-                }
-            }
+            Kafka.consumir(consumidor,
+                    evento -> Kafka.publicarAlerta(produtor, paraAlerta(evento)));
         }
+    }
+
+    /** Traduz o evento derivado na acao correspondente: um alerta de severidade ALTA. */
+    private static Alerta paraAlerta(EventoEstagnacao e) {
+        return new Alerta(
+                Alerta.Tipo.F4_ESTAGNACAO,
+                Alerta.Severidade.ALTA,
+                e.idEstacao(),
+                e.localizacao(),
+                e.municipio(),
+                e.poluenteCritico(),
+                e.iqarMaximo(),
+                "Moderada ou pior",
+                ("Episodio de estagnacao atmosferica: %s. "
+                        + "Recomenda-se restringir atividades ao ar livre na regiao.")
+                        .formatted(e.descricaoCurta()),
+                Instant.now());
     }
 }

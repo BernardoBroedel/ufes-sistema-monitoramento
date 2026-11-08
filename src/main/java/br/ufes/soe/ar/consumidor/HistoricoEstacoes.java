@@ -9,6 +9,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * StateStore em memoria, no mesmo padrao do {@code StudentStateStore} do Lab2:
@@ -70,45 +71,47 @@ public class HistoricoEstacoes {
         return true;
     }
 
-    /** Leitura imediatamente anterior a atual, ou null se ainda nao houver. */
-    public Medicao anterior(int idEstacao) {
-        Deque<Medicao> fila = porEstacao.get(idEstacao);
-        if (fila == null || fila.size() < 2) {
-            return null;
+    /** Leitura imediatamente anterior a atual, se ja houver. */
+    public Optional<Medicao> anterior(int idEstacao) {
+        Deque<Medicao> fila = fila(idEstacao);
+        if (fila.size() < 2) {
+            return Optional.empty();
         }
-        List<Medicao> lista = List.copyOf(fila);
-        return lista.get(lista.size() - 2);
+        return fila.stream()
+                .skip(fila.size() - 2L)     // pula tudo menos as duas ultimas
+                .findFirst();
     }
 
     /**
-     * Leitura mais antiga dentro da janela de {@code horas} a contar da leitura
-     * mais recente. Devolve null se ainda nao ha historico suficiente.
+     * Leitura mais recente que ainda esta a pelo menos {@code horas} da leitura atual,
+     * ou vazio se ainda nao ha historico suficiente.
      */
-    public Medicao haHoras(int idEstacao, int horas) {
-        Deque<Medicao> fila = porEstacao.get(idEstacao);
-        if (fila == null || fila.isEmpty()) {
-            return null;
-        }
-        LocalDateTime alvo = fila.peekLast().dataHoraMedicao().minusHours(horas);
-        Medicao candidata = null;
-        for (Medicao m : fila) {
-            if (!m.dataHoraMedicao().isAfter(alvo)) {
-                candidata = m;      // a mais recente que ainda esta fora da janela
-            }
-        }
-        return candidata;
+    public Optional<Medicao> haHoras(int idEstacao, int horas) {
+        Deque<Medicao> fila = fila(idEstacao);
+        return ultima(fila)
+                .map(ultima -> ultima.dataHoraMedicao().minusHours(horas))
+                .flatMap(alvo -> fila.stream()
+                        .filter(m -> !m.dataHoraMedicao().isAfter(alvo))
+                        .reduce((maisAntiga, maisNova) -> maisNova));
     }
 
     /** Todas as leituras dentro das ultimas {@code horas}, da mais antiga para a mais nova. */
     public List<Medicao> janela(int idEstacao, int horas) {
-        Deque<Medicao> fila = porEstacao.get(idEstacao);
-        if (fila == null || fila.isEmpty()) {
-            return List.of();
-        }
-        LocalDateTime corte = fila.peekLast().dataHoraMedicao().minusHours(horas).minusMinutes(1);
-        return fila.stream()
-                .filter(m -> m.dataHoraMedicao().isAfter(corte))
-                .toList();
+        Deque<Medicao> fila = fila(idEstacao);
+        return ultima(fila)
+                .map(ultima -> ultima.dataHoraMedicao().minusHours(horas).minusMinutes(1))
+                .map(corte -> fila.stream()
+                        .filter(m -> m.dataHoraMedicao().isAfter(corte))
+                        .toList())
+                .orElse(List.of());
+    }
+
+    private Deque<Medicao> fila(int idEstacao) {
+        return porEstacao.getOrDefault(idEstacao, new ArrayDeque<>());
+    }
+
+    private static Optional<Medicao> ultima(Deque<Medicao> fila) {
+        return Optional.ofNullable(fila.peekLast());
     }
 
     public int estacoesConhecidas() {

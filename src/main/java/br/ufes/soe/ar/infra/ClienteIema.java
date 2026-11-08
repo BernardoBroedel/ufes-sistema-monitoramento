@@ -11,10 +11,16 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
+import java.util.function.BinaryOperator;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * Cliente da API publica de qualidade do ar do Governo do ES.
@@ -53,28 +59,28 @@ public class ClienteIema {
     public List<Medicao> lerEstacoes() throws Exception {
         JsonNode raiz = buscar(BASE);
         Instant agora = Instant.now();
-        List<Medicao> medicoes = new ArrayList<>();
 
-        for (JsonNode no : raiz) {
-            int id = no.path("IdEstacao").asInt();
-            if (!Estacoes.ehGrandeVitoria(id)) {
-                continue;
-            }
-            medicoes.add(new Medicao(
-                    id,
-                    texto(no, "Descricao"),
-                    texto(no, "Localizacao"),
-                    Estacoes.municipio(id),
-                    no.path("Latitude").asDouble(),
-                    no.path("Longitude").asDouble(),
-                    texto(no, "Poluente"),
-                    no.path("Valor").isNumber() ? no.path("Valor").asDouble() : null,
-                    no.path("Iqa").asDouble(),
-                    texto(no, "Faixa"),
-                    dataHora(no.path("DataHora")),
-                    agora));
-        }
-        return medicoes;
+        return Json.elementos(raiz)
+                .filter(no -> Estacoes.ehGrandeVitoria(no.path("IdEstacao").asInt()))
+                .map(no -> paraMedicao(no, agora))
+                .toList();
+    }
+
+    private static Medicao paraMedicao(JsonNode no, Instant agora) {
+        int id = no.path("IdEstacao").asInt();
+        return new Medicao(
+                id,
+                texto(no, "Descricao"),
+                texto(no, "Localizacao"),
+                Estacoes.municipio(id),
+                no.path("Latitude").asDouble(),
+                no.path("Longitude").asDouble(),
+                texto(no, "Poluente"),
+                no.path("Valor").isNumber() ? no.path("Valor").asDouble() : null,
+                no.path("Iqa").asDouble(),
+                texto(no, "Faixa"),
+                dataHora(no.path("DataHora")),
+                agora);
     }
 
     /**
@@ -89,45 +95,57 @@ public class ClienteIema {
      */
     public List<Medicao> lerHistorico(int idEstacao) throws Exception {
         JsonNode poluentes = buscar(BASE + "/" + idEstacao);
-        Map<LocalDateTime, Medicao> porHora = new TreeMap<>();
         Instant agora = Instant.now();
 
-        for (JsonNode p : poluentes) {
-            String nomePoluente = texto(p, "Poluente");
-            JsonNode datas = p.path("DataHora");
-            JsonNode valores = p.path("ValorIqa");
-            JsonNode faixas = p.path("FaixaIQA");
+        Map<LocalDateTime, Medicao> porHora = Json.elementos(poluentes)
+                .flatMap(p -> leiturasDoPoluente(p, idEstacao, agora))
+                .collect(Collectors.toMap(
+                        Medicao::dataHoraMedicao,
+                        Function.identity(),
+                        // duas leituras na mesma hora: fica o pior poluente
+                        // (em empate, o que chegou primeiro)
+                        BinaryOperator.maxBy(Comparator.comparingDouble(Medicao::iqar)),
+                        TreeMap::new));     // ordenado por hora
+        return List.copyOf(porHora.values());
+    }
 
-            for (int i = 0; i < datas.size(); i++) {
-                LocalDateTime hora = dataHora(datas.get(i));
-                if (hora == null || i >= valores.size()) {
-                    continue;
-                }
-                double iqar;
-                try {
-                    iqar = Double.parseDouble(valores.get(i).asText());
-                } catch (NumberFormatException e) {
-                    continue;
-                }
-                Medicao existente = porHora.get(hora);
-                if (existente != null && existente.iqar() >= iqar) {
-                    continue;   // outro poluente ja esta pior nesta hora
-                }
-                porHora.put(hora, new Medicao(
-                        idEstacao,
-                        "EMQAr - RGV" + idEstacao,
-                        Estacoes.localizacao(idEstacao),
-                        Estacoes.municipio(idEstacao),
-                        0, 0,
-                        nomePoluente,
-                        iqar,
-                        iqar,
-                        i < faixas.size() ? faixas.get(i).asText() : null,
-                        hora,
-                        agora));
-            }
+    /** Serie de um unico poluente, descartando posicoes sem data ou com IQAr invalido. */
+    private static Stream<Medicao> leiturasDoPoluente(JsonNode p, int idEstacao, Instant agora) {
+        String nomePoluente = texto(p, "Poluente");
+        JsonNode datas = p.path("DataHora");
+        JsonNode valores = p.path("ValorIqa");
+        JsonNode faixas = p.path("FaixaIQA");
+
+        return IntStream.range(0, Math.min(datas.size(), valores.size()))
+                .mapToObj(i -> {
+                    LocalDateTime hora = dataHora(datas.get(i));
+                    Double iqar = numero(valores.get(i));
+                    if (hora == null || iqar == null) {
+                        return null;
+                    }
+                    return new Medicao(
+                            idEstacao,
+                            "EMQAr - RGV" + idEstacao,
+                            Estacoes.localizacao(idEstacao),
+                            Estacoes.municipio(idEstacao),
+                            0, 0,
+                            nomePoluente,
+                            iqar,
+                            iqar,
+                            i < faixas.size() ? faixas.get(i).asText() : null,
+                            hora,
+                            agora);
+                })
+                .filter(Objects::nonNull);
+    }
+
+    /** Numero contido no texto do no, ou null se nao for numerico. */
+    private static Double numero(JsonNode no) {
+        try {
+            return Double.parseDouble(no.asText());
+        } catch (NumberFormatException e) {
+            return null;
         }
-        return new ArrayList<>(porHora.values());
     }
 
     private JsonNode buscar(String url) throws Exception {
