@@ -99,15 +99,24 @@ services:
       - |
         set -e
         BS=kafka1:19092
+        # criar <topico> <particoes> [configs extras do kafka-topics.sh]
         criar() {
           /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
             --topic "$$1" --partitions "$$2" --replication-factor 3 \
-            --bootstrap-server $$BS
+            --bootstrap-server $$BS "$${@:3}"
         }
         criar ar.medicoes          3
         criar clima.condicoes      1
         criar ar.eventos-derivados 3
         criar ar.alertas           3
+        # Trabalho 2 (Kafka Streams). Os topicos internos das topologias
+        # (changelog e repartition) sao criados pelo proprio Streams.
+        #   clima.por-hora : fonte da GlobalKTable de clima. Compactado, porque
+        #                    so interessa a ultima condicao de cada hora.
+        #   ar.intervalos  : intervalos [inicio, fim] por estacao, base da
+        #                    algebra de Allen em F5 e F6.
+        criar clima.por-hora       1 --config cleanup.policy=compact
+        criar ar.intervalos        3
         echo "--- topicos do cluster ---"
         /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server $$BS
     restart: "no"

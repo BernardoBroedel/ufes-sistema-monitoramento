@@ -3,6 +3,7 @@ package br.ufes.soe.ar.produtor;
 import br.ufes.soe.ar.infra.ClienteIema;
 import br.ufes.soe.ar.infra.Config;
 import br.ufes.soe.ar.infra.RegistroDeduplicacao;
+import br.ufes.soe.ar.infra.TempoDoEvento;
 import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.Medicao;
 import br.ufes.soe.ar.serde.JsonSerializer;
@@ -72,8 +73,12 @@ public class ProdutorIema {
                         if (!dedup.registrarSeNova(m.chaveDeduplicacao())) {
                             continue;   // ja publicada num polling anterior
                         }
+                        // Timestamp do registro = hora da medicao (tempo do evento),
+                        // e nao a hora do polling. Estacao offline fica sem.
                         produtor.send(new ProducerRecord<>(
-                                Topicos.MEDICOES, String.valueOf(m.idEstacao()), m));
+                                Topicos.MEDICOES, null,
+                                TempoDoEvento.paraRegistro(m.dataHoraMedicao()),
+                                String.valueOf(m.idEstacao()), m));
                         novas++;
 
                         System.out.printf("  -> [%s] %s%n",

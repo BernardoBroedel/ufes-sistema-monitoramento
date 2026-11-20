@@ -2,6 +2,7 @@ package br.ufes.soe.ar.produtor;
 
 import br.ufes.soe.ar.infra.ClienteOpenMeteo;
 import br.ufes.soe.ar.infra.Config;
+import br.ufes.soe.ar.infra.TempoDoEvento;
 import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.CondicaoClima;
 import br.ufes.soe.ar.serde.JsonSerializer;
@@ -59,7 +60,9 @@ public class ProdutorClima {
                         System.out.printf("[%s] sem leitura nova (%s)%n",
                                 LocalTime.now().format(HORA), c.dataHora());
                     } else {
-                        produtor.send(new ProducerRecord<>(Topicos.CLIMA, CHAVE, c));
+                        // Timestamp do registro = hora da condicao (tempo do evento).
+                        produtor.send(new ProducerRecord<>(Topicos.CLIMA, null,
+                                TempoDoEvento.paraRegistro(c.dataHora()), CHAVE, c));
                         produtor.flush();
                         ultima = c.dataHora();
                         System.out.printf("[%s] publicado %s | %s%n",
