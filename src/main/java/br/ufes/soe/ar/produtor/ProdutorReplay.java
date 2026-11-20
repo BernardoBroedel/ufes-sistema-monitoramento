@@ -4,6 +4,7 @@ import br.ufes.soe.ar.infra.ClienteIema;
 import br.ufes.soe.ar.infra.ClienteOpenMeteo;
 import br.ufes.soe.ar.infra.Config;
 import br.ufes.soe.ar.infra.Estacoes;
+import br.ufes.soe.ar.infra.TempoDoEvento;
 import br.ufes.soe.ar.infra.Topicos;
 import br.ufes.soe.ar.modelo.CondicaoClima;
 import br.ufes.soe.ar.modelo.Medicao;
@@ -119,13 +120,17 @@ public class ProdutorReplay {
                     CondicaoClima c = climaPorHora.get(hora);
                     if (c != null) {
                         produtor.send(new ProducerRecord<>(
-                                Topicos.CLIMA, "grande-vitoria", c));
+                                Topicos.CLIMA, null, TempoDoEvento.paraRegistro(c.dataHora()),
+                                "grande-vitoria", c));
                         System.out.printf("  %s  %-20s %s%n",
                                 hora, "[clima]", c.descricaoCurta());
                     }
                 }
+                // O replay e o caso em que isto mais importa: o registro carrega a
+                // hora historica da medicao, e nao o instante em que foi reenviado.
                 produtor.send(new ProducerRecord<>(
-                        Topicos.MEDICOES, String.valueOf(m.idEstacao()), m));
+                        Topicos.MEDICOES, null, TempoDoEvento.paraRegistro(m.dataHoraMedicao()),
+                        String.valueOf(m.idEstacao()), m));
 
                 System.out.printf("  %s  %-20s IQAr %6.1f  [%s]%n",
                         m.dataHoraMedicao(), m.localizacao(), m.iqar(), m.faixa());

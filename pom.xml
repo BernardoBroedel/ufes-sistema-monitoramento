@@ -11,20 +11,45 @@
   <packaging>jar</packaging>
 
   <name>Monitoramento da Qualidade do Ar - Grande Vitoria</name>
-  <description>Projeto 1 - Sistemas Orientados a Eventos - UFES</description>
+  <description>Projetos 1 e 2 - Sistemas Orientados a Eventos - UFES</description>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- Mesmas versoes definidas pela professora no Lab2 -->
-    <kafka.version>4.2.0</kafka.version>
+    <!-- Mesma versao dos labs de Kafka Streams (Aula 6). A imagem do
+         docker-compose.yml acompanha esta versao. -->
+    <kafka.version>4.3.0</kafka.version>
     <jackson.version>2.21.2</jackson.version>
+    <junit.version>5.11.4</junit.version>
   </properties>
+
+  <!-- O kafka-streams traz um jackson-annotations mais antigo (2.19), que o Maven
+       escolheria no lugar do exigido pelo jackson-databind e quebraria o
+       ObjectMapper em tempo de execucao. A BOM alinha todos os modulos Jackson. -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-clients</artifactId>
+      <version>${kafka.version}</version>
+    </dependency>
+
+    <!-- Trabalho 2: topologias CEP com a DSL do Kafka Streams.
+         Mesma versao do kafka-clients, para nao misturar protocolos. -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-streams</artifactId>
       <version>${kafka.version}</version>
     </dependency>
 
@@ -41,11 +66,29 @@
       <version>${jackson.version}</version>
     </dependency>
 
-    <!-- Backend de log do kafka-clients; sem isso o SLF4J reclama no console -->
+    <!-- Backend de log do Kafka. Precisa ser da linha 1.7, a mesma do slf4j-api
+         que o kafka-clients traz: o slf4j-simple 2.x nao e reconhecido pela API
+         1.7 e os logs saiam desligados (NOP). Mesma versao usada nos labs.
+         O nivel (WARN) esta em src/main/resources/simplelogger.properties. -->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
-      <version>2.0.17</version>
+      <version>1.7.36</version>
+    </dependency>
+
+    <!-- Testes: o TopologyTestDriver roda a topologia sem cluster e com o tempo
+         do evento sob controle. E como as situacoes de interesse sao validadas. -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-streams-test-utils</artifactId>
+      <version>${kafka.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
@@ -62,6 +105,12 @@
             <arg>-parameters</arg>
           </compilerArgs>
         </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
       </plugin>
 
       <!-- Gera um jar unico com as dependencias, para rodar cada componente
