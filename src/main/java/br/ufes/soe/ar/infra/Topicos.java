@@ -18,9 +18,11 @@ public final class Topicos {
     // ------------------------------------------------------- Trabalho 2 (Streams)
 
     /**
-     * Clima rechaveado pela hora cheia ({@code 2026-09-20T03:00}). E a fonte da
-     * GlobalKTable que enriquece as medicoes em F4: cada medicao procura a condicao
-     * da sua hora. Compactado, porque so interessa a ultima leitura de cada hora.
+     * Clima rechaveado pela hora cheia ({@code 2026-09-20T03:00}). E lido como
+     * KTable no join da F4, no padrao do Lab2 de Streams (UserLocationTemp): a
+     * medicao troca de chave para a sua hora com {@code map}, faz o join com esta
+     * tabela e o Streams cria sozinho o topico de repartition. Compactado, porque
+     * so interessa a ultima leitura de cada hora.
      */
     public static final String CLIMA_POR_HORA = "clima.por-hora";
 

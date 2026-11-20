@@ -16,7 +16,7 @@
 name: ufes-monitoramento
 
 x-kafka-comum: &kafka-comum
-  image: apache/kafka:4.2.0
+  image: apache/kafka:4.3.0
   restart: unless-stopped
   environment: &env-comum
     KAFKA_PROCESS_ROLES: broker,controller
@@ -85,7 +85,7 @@ services:
   # Cria os tópicos do projeto e encerra. Roda de novo a cada "up" — o --if-not-exists
   # torna a operação idempotente.
   criar-topicos:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.0
     container_name: criar-topicos
     depends_on:
       kafka1:
@@ -111,8 +111,9 @@ services:
         criar ar.alertas           3
         # Trabalho 2 (Kafka Streams). Os topicos internos das topologias
         # (changelog e repartition) sao criados pelo proprio Streams.
-        #   clima.por-hora : fonte da GlobalKTable de clima. Compactado, porque
-        #                    so interessa a ultima condicao de cada hora.
+        #   clima.por-hora : clima com chave = hora cheia, lido como KTable no
+        #                    join da F4. Compactado, porque so interessa a
+        #                    ultima condicao de cada hora.
         #   ar.intervalos  : intervalos [inicio, fim] por estacao, base da
         #                    algebra de Allen em F5 e F6.
         criar clima.por-hora       1 --config cleanup.policy=compact

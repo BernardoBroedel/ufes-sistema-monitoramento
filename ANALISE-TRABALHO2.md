@@ -30,9 +30,10 @@ São esses os pontos que derrubam um projeto de Streams quando ficam para depois
    - `state.dir` dentro de `saida/` (o padrão `/tmp` é ruim no Windows);
    - `replication.factor=3` para os tópicos internos (changelog e repartition);
    - opcionalmente `processing.guarantee=exactly_once_v2`, que o cluster de 3 brokers suporta e vale como ponto extra.
-5. **Co-particionamento.** `ar.medicoes` tem 3 partições com chave `idEstacao`. `clima.condicoes` tem 1 partição com chave fixa. Um join `KStream-KTable` direto não funciona. Há duas saídas:
-   - **GlobalKTable** de clima com chave "hora" (por exemplo `2026-09-20T03`), e cada medição consulta a hora correspondente. É a opção mais simples e robusta.
-   - **flatMap** do clima para as 8 estações, repartition e um join `KStream-KStream` com `JoinWindows` de cerca de 1 hora. É mais trabalhoso, mas mostra join com janela, o que rende bem na apresentação.
+5. **Co-particionamento.** `ar.medicoes` tem 3 partições com chave `idEstacao`. `clima.condicoes` tem 1 partição com chave fixa. As chaves não coincidem, então a medição precisa trocar de chave antes do join. Há três saídas:
+   - **Padrão do Lab2 (`UserLocationTemp`)** *(escolhido, ver seção 11)*: a medição troca a chave para a hora com `map` e faz `join` com a `KTable` de `clima.por-hora`. O Streams cria sozinho o tópico de repartition com o número de partições da tabela.
+   - **GlobalKTable** de clima com chave "hora", consultada por cada medição. Não tem repartition, mas não apareceu nos labs.
+   - **flatMap** do clima para as 8 estações, repartition e um join `KStream-KStream` com `JoinWindows` de cerca de 1 hora. Mostra join com janela, mas dá mais trabalho.
 6. **Infraestrutura.** Os tópicos novos precisam entrar no serviço `criar-topicos` do `docker-compose.yml` e em `Topicos.java`. O enum `Alerta.Tipo` precisa dos novos tipos (F5, F6, F7…).
 
 ## 3. R1: F4 em Kafka Streams
@@ -40,7 +41,7 @@ São esses os pontos que derrubam um projeto de Streams quando ficam para depois
 Proposta de topologia, aproveitando a mesma semântica de hoje:
 
 ```
-ar.medicoes ──filter(operacional)──► join(GlobalKTable clima por hora) ──► MedicaoEnriquecida
+ar.medicoes ──filter(operacional)──► map(chave = hora) ──► join(KTable clima.por-hora) ──► selectKey(idEstacao) ──► MedicaoEnriquecida
    └─► groupByKey ─► aggregate(SequenciaEstagnacao)       ← stateful, store RocksDB
          estado: horas consecutivas > 40, vento acumulado, chuva acumulada, já anunciado?
    └─► toStream ─► filter(atingiu 6h && vento médio < 8 && chuva == 0 && !anunciado)
@@ -85,7 +86,8 @@ Alternativas, se alguma acima não convencer:
 |---|---|
 | `filter`, `filterNot` | medições operacionais (F4, F5, F7) |
 | `map`, `mapValues`, `selectKey`, `flatMap` | enriquecimento, troca de chave por região, montagem dos alertas |
-| `join` (stream-GlobalKTable e/ou stream-stream com janela) | F4 (clima), F5 e F6 (intervalos) |
+| `join` (stream-KTable, como no Lab2, e stream-stream com janela) | F4 (clima), F5 e F6 (intervalos) |
+| `peek`, `split` (Lab1) | depuração e apresentação do fluxo; roteamento por severidade ou região |
 | `aggregate`, `count`, `reduce` | F4 (sequência), F7 (contagem regional) |
 | `TimeWindows` / `SessionWindows` / hopping | F7 / F5 e F6 / alternativa de F4 |
 | `suppress` | resultado final das janelas |
@@ -118,7 +120,7 @@ O painel atual já atende o básico. Ideias para a parte de "criatividade":
 | # | Decisão | Escolha | Consequência |
 |---|---|---|---|
 | 1 | Novas situações de interesse | **F5** (propagação de pluma, Allen) + **F6** (lacuna crítica de monitoramento, Allen) + **F7** (episódio regional, janela de 1h) | Allen aparece em duas situações; F7 cobre janela fixa e agregação |
-| 2 | Join do clima na F4 | **GlobalKTable** indexada pela hora cheia | Clima rechaveado para o tópico compactado `clima.por-hora`; cada medição consulta a sua hora, sem repartition |
+| 2 | Join do clima na F4 | ~~GlobalKTable~~ → **padrão do Lab2: `map` + join com `KTable`** (revisto em 20/11, seção 11) | Clima com chave = hora no tópico compactado `clima.por-hora`; a medição troca de chave para a sua hora e faz o join, com repartition automático |
 | 3 | F1 a F3 | **Continuam como estão** (consumers da etapa 1) | F6 monta seus próprios intervalos de "estação offline" a partir de `ar.medicoes` (session window), sem depender de F3 |
 | 4 | `CorrelacionadorEstagnacao` (F4 antigo) | **Removido e substituído** pela versão Streams | Mesmo `EventoEstagnacao` em `ar.eventos-derivados`; `AlertaEstagnacao`, painel e CSV não mudam. A versão antiga fica no histórico do git |
 
@@ -126,7 +128,7 @@ O painel atual já atende o básico. Ideias para a parte de "criatividade":
 
 ### Etapa 1: base do Kafka Streams (concluída, ainda não executada contra o cluster)
 
-- `pom.xml`: `kafka-streams` 4.2.0, `kafka-streams-test-utils`, JUnit 5 e surefire. A `jackson-bom` foi importada porque o `kafka-streams` trazia um `jackson-annotations` 2.19 que quebrava o `ObjectMapper`.
+- `pom.xml`: `kafka-streams` (hoje 4.3.0, ver seção 11), `kafka-streams-test-utils`, JUnit 5 e surefire. A `jackson-bom` foi importada porque o `kafka-streams` trazia um `jackson-annotations` 2.19 que quebrava o `ObjectMapper`.
 - `infra/TempoDoEvento`: converte `dataHoraMedicao`/`dataHora` (horário de São Paulo) em timestamp. Ignora a data sentinela `0001-01-01` e não grava timestamps no futuro.
 - Produtores (`ProdutorIema`, `ProdutorClima`, `ProdutorReplay`): passam a gravar o **tempo do evento** no `ProducerRecord`.
 - `streams/ExtratorTempoEvento`: `TimestampExtractor` que lê o tempo de dentro do evento. A leitura de estação offline entra no tempo corrente da partição. Se a partição ainda não tem tempo, a leitura é descartada, para não avançar o relógio do replay.
@@ -136,12 +138,37 @@ O painel atual já atende o básico. Ideias para a parte de "criatividade":
 - `config.properties`: `tempo.zona`, `streams.state.dir`, `streams.replication.factor`, `streams.processing.guarantee`.
 - Testes (`mvn package`): 12 testes passando, incluindo uma topologia no `TopologyTestDriver` que mostra janelas montadas pela hora da medição, mesmo com todos os registros chegando no mesmo instante.
 
-**Observação já existente na etapa 1:** o `kafka-clients` traz `slf4j-api` 1.7, que não reconhece o `slf4j-simple` 2.0. Por isso os logs da biblioteca Kafka saem desligados (NOP). Corrigir isso deixa o console bem mais verboso, então fica como decisão à parte.
+**Observação já existente na etapa 1:** o `kafka-clients` traz `slf4j-api` 1.7, que não reconhece o `slf4j-simple` 2.0. Por isso os logs da biblioteca Kafka saíam desligados (NOP). *Corrigido em 20/11 (seção 11).*
 
 ### Próximas etapas
 
-2. F4 em Kafka Streams (GlobalKTable de clima + agregação de sequência por estação), com teste, e remoção do `CorrelacionadorEstagnacao`.
+2. F4 em Kafka Streams (`map` + join com a `KTable` de clima, depois agregação de sequência por estação), com teste, e remoção do `CorrelacionadorEstagnacao`.
 3. Utilitário da álgebra de Allen (`Intervalo`, `RelacaoAllen` com as 13 relações) e testes.
 4. F5, F6 e F7.
 5. Notificador e painel: novos tipos de alerta, Interactive Queries, linha do tempo de intervalos.
 6. README, diagramas e roteiro da apresentação.
+
+## 11. Revisão após os labs de Kafka Streams (20/11/2026)
+
+Comparei o trabalho com os labs da Aula 6 (Lab1: stateless; Lab2: count, aggregate, join, windows), que estão em `C:\UFES\lab_1_2`. O padrão de código dos labs já era seguido:
+- `application.id` por aplicação;
+- `StreamsBuilder` → `build()` → `describe()`;
+- `CountDownLatch` com shutdown hook;
+- `TimeWindows.ofSizeWithNoGrace`.
+
+Três divergências viraram decisões:
+
+| # | Decisão | Escolha | O que mudou |
+|---|---|---|---|
+| 1 | Versão do Kafka | **4.3.0**, como nos labs | `kafka.version` no `pom.xml` (clients, streams e test-utils) e imagens `apache/kafka:4.3.0` no `docker-compose.yml`. **Recriar o cluster** (`docker compose down -v && docker compose up -d`) antes da próxima execução |
+| 2 | Join medição × clima (F4) | **Padrão do Lab2** (`UserLocationTemp`): `map` para chave = hora + join com `KTable` | Substitui a GlobalKTable. O tópico `clima.por-hora` continua. A seção 2.5 dizia que o join KStream-KTable "não funciona", o que era impreciso: funciona depois da troca de chave, e o Streams faz o repartition sozinho |
+| 3 | Logs do Kafka | **Corrigidos, nível WARN** | `slf4j-simple` 1.7.36 (mesma linha do `slf4j-api` trazido pelo Kafka, como no lab) e `simplelogger.properties` com `defaultLogLevel=warn`. Para depurar: `-Dorg.slf4j.simpleLogger.defaultLogLevel=info` |
+
+Diretrizes para as próximas etapas, também tiradas dos labs:
+- `peek` nos pontos-chave das topologias, para depuração e para mostrar o fluxo na apresentação (Lab1);
+- `split()` onde houver roteamento, por exemplo por severidade ou região (desafio do Lab1);
+- stores nomeados com `Materialized.as("...")` (Lab2), o que também é pré-requisito para Interactive Queries;
+- construtor do `JsonSerde` com `TypeReference` quando alguma agregação produzir lista, como o `UserLocationsLista` do Lab2;
+- justificar na apresentação o que vai além dos labs: extrator de tempo do evento, `exactly_once_v2`, session windows, `suppress` e Allen.
+
+Observação: o Kafka UI do `lab_1_2` também usa a porta 8080, a mesma do painel do Notificador. Não suba os dois ambientes ao mesmo tempo.

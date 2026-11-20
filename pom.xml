@@ -16,8 +16,9 @@
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- Mesmas versoes definidas pela professora no Lab2 -->
-    <kafka.version>4.2.0</kafka.version>
+    <!-- Mesma versao dos labs de Kafka Streams (Aula 6). A imagem do
+         docker-compose.yml acompanha esta versao. -->
+    <kafka.version>4.3.0</kafka.version>
     <jackson.version>2.21.2</jackson.version>
     <junit.version>5.11.4</junit.version>
   </properties>
@@ -65,11 +66,14 @@
       <version>${jackson.version}</version>
     </dependency>
 
-    <!-- Backend de log do kafka-clients; sem isso o SLF4J reclama no console -->
+    <!-- Backend de log do Kafka. Precisa ser da linha 1.7, a mesma do slf4j-api
+         que o kafka-clients traz: o slf4j-simple 2.x nao e reconhecido pela API
+         1.7 e os logs saiam desligados (NOP). Mesma versao usada nos labs.
+         O nivel (WARN) esta em src/main/resources/simplelogger.properties. -->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
-      <version>2.0.17</version>
+      <version>1.7.36</version>
     </dependency>
 
     <!-- Testes: o TopologyTestDriver roda a topologia sem cluster e com o tempo
